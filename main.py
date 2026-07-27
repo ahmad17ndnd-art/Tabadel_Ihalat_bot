@@ -1,7 +1,10 @@
 import os
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timedelta
+from fastapi import FastAPI
+import uvicorn
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -18,6 +21,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# ==================== إعدادات سيرفر الويب (لترضية Railway) ====================
+web_app = FastAPI()
+
+@web_app.get("/")
+def home():
+    return {"status": "Telegram Bot is running smoothly!"}
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
 
 # ==================== الإعدادات الرئيسية ====================
 BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
@@ -352,7 +366,7 @@ async def user_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("msg_u_"):
         target_id = int(data.replace("msg_u_", ""))
         context.user_data['target_user_id'] = target_id
-        await query.edit_message_text(f"أرسل الآن الرسالة التي تريد وجهها مباشرة للمستخدم `{target_id}`:", parse_mode="Markdown")
+        await query.edit_message_text(f"أرسل الآن الرسالة التي تريد توجيهها مباشرة للمستخدم `{target_id}`:", parse_mode="Markdown")
         return WAITING_DIRECT_TEXT
 
 
@@ -408,10 +422,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==================== تشغيل البوت ====================
+# ==================== تشغيل البوت والسيرفر ====================
 
 def main():
     init_db()  # تهيئة قاعدة البيانات عند بدء التشغيل
+
+    # تشغيل سيرفر الويب في خيط منفصل لفتح البورت المطلوب لمنصة Railway
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -435,9 +453,9 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
 
-    print("Bot with Database & Stats is running...")
+    print("Bot and Web Server are running...")
     app.run_polling()
 
 
 if __name__ == "__main__":
-    main()# redeploy
+    main()
