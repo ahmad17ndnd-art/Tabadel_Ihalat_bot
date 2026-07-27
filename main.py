@@ -22,16 +22,12 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ==================== إعدادات سيرفر الويب (يجب أن يكون اسمه app لترتاح المنصة) ====================
+# ==================== إعدادات سيرفر الويب ====================
 app = FastAPI()
 
 @app.get("/")
 def home():
     return {"status": "Telegram Bot is running smoothly!"}
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
 
 # ==================== الإعدادات الرئيسية ====================
 BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
@@ -422,16 +418,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==================== تشغيل البوت والسيرفر ====================
+# ==================== تشغيل البوت في الخلفية مع بدء السيرفر ====================
 
-def main():
-    init_db()  # تهيئة قاعدة البيانات عند بدء التشغيل
-
-    # تشغيل سيرفر الويب في خيط منفصل لفتح البورت المطلوب لمنصة Railway
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-
-    # تسمية تطبيق التيليجرام باسم telegram_app لتجنب تداخله مع متغير app الخاص بـ FastAPI
+def run_telegram_bot():
+    init_db()  # تهيئة قاعدة البيانات
     telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     admin_conv_handler = ConversationHandler(
@@ -454,9 +444,11 @@ def main():
     telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
 
-    print("Bot and Web Server are running...")
+    logging.info("Telegram Bot is starting polling...")
     telegram_app.run_polling()
 
-
-if __name__ == "__main__":
-    main()
+@app.on_event("startup")
+def startup_event():
+    # تشغيل البوت في خيط (Thread) منفصل ليعمل بالتوازي مع سيرفر FastAPI
+    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    bot_thread.start()
