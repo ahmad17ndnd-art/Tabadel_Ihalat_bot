@@ -22,16 +22,16 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ==================== إعدادات سيرفر الويب (لترضية Railway) ====================
-web_app = FastAPI()
+# ==================== إعدادات سيرفر الويب (يجب أن يكون اسمه app لترتاح المنصة) ====================
+app = FastAPI()
 
-@web_app.get("/")
+@app.get("/")
 def home():
     return {"status": "Telegram Bot is running smoothly!"}
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(web_app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 # ==================== الإعدادات الرئيسية ====================
 BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
@@ -431,8 +431,8 @@ def main():
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
 
-    # استخدام app للتيليجرام و web_app للـ FastAPI لتجنب تداخل المتغيرات
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # تسمية تطبيق التيليجرام باسم telegram_app لتجنب تداخله مع متغير app الخاص بـ FastAPI
+    telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     admin_conv_handler = ConversationHandler(
         entry_points=[
@@ -448,14 +448,14 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(admin_conv_handler)
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("admin", admin_panel))
+    telegram_app.add_handler(admin_conv_handler)
+    telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
 
     print("Bot and Web Server are running...")
-    app.run_polling()
+    telegram_app.run_polling()
 
 
 if __name__ == "__main__":
