@@ -23,9 +23,9 @@ logging.basicConfig(
 )
 
 # ==================== إعدادات سيرفر الويب (لترضية Railway) ====================
-web_app = FastAPI()
+app = FastAPI()
 
-@web_app.get("/")
+@app.get("/")
 def home():
     return {"status": "Telegram Bot is running smoothly!"}
 
