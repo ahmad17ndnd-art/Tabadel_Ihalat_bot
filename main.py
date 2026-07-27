@@ -418,48 +418,43 @@ def run_telegram_bot():
     init_db()
     telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # محادثة تعديل رسالة الترحيب
     welcome_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
         states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # محادثة تعديل رسالة ما بعد الصورة
     after_photo_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(ask_after_photo_msg, pattern="^change_after_photo$")],
         states={WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)]},
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # محادثة الإذاعة
     broadcast_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(ask_broadcast_msg, pattern="^broadcast$")],
         states={WAITING_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_broadcast)]},
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # محادثة المراسلة المباشرة لعضو
     direct_msg_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(ask_direct_msg, pattern="^msg_u_")],
         states={WAITING_DIRECT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_direct_message)]},
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # إضافة المعالجات بالترتيب الصحيح
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("admin", admin_panel))
     
-    # معالج الأزرار العامة والتنقل بين القوائم
-    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(show_stats|main_admin_menu|list_users|manage_u_|toggleban_u_)$"))
+    # [تصحيح جذري]: فصل الأزرار وإزالة علامة النهاية $ التي كانت تمنع قراءة الآيديات
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(show_stats|main_admin_menu|list_users)$"))
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^manage_u_"))
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^toggleban_u_"))
 
-    # إضافة محادثات إدخال النصوص
     telegram_app.add_handler(welcome_conv)
     telegram_app.add_handler(after_photo_conv)
     telegram_app.add_handler(broadcast_conv)
     telegram_app.add_handler(direct_msg_conv)
 
-    # الرسائل العادية والصور
     telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
 
