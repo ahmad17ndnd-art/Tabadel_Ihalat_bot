@@ -16,7 +16,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# إعداد التسجيل للمساعدة في إيجاد الأخطاء
+# إعداد التسجيل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -39,7 +39,6 @@ DB_NAME = "bot_data.db"
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # جدول المستخدمين
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -50,14 +49,12 @@ def init_db():
             bot_blocked INTEGER DEFAULT 0
         )
     ''')
-    # جدول إعدادات البوت
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     ''')
-    # رسائل افتراضية
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('welcome_msg', 'أهلاً بك في بوت تبادل الإحالات! يرجى إرسال صورة التأكيد الآن.')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('after_photo_msg', 'تم استلام الصورة بنجاح! الآن يرجى إرسال رابط الإحالة الخاص بك.')")
     conn.commit()
@@ -132,30 +129,21 @@ def get_stats():
 
     cursor.execute("SELECT COUNT(*) FROM users")
     total = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM users WHERE joined_at >= ?", (today_str,))
     today = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM users WHERE joined_at >= ?", (week_str,))
     week = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM users WHERE joined_at >= ?", (month_str,))
     month = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM users WHERE bot_blocked = 1")
     blocked_bot = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
     banned_by_admin = cursor.fetchone()[0]
 
     conn.close()
     return {
-        "total": total,
-        "today": today,
-        "week": week,
-        "month": month,
-        "blocked_bot": blocked_bot,
-        "banned_by_admin": banned_by_admin
+        "total": total, "today": today, "week": week,
+        "month": month, "blocked_bot": blocked_bot, "banned_by_admin": banned_by_admin
     }
 
 def get_recent_users(limit=15):
@@ -174,7 +162,7 @@ def get_all_active_user_ids():
     conn.close()
     return [r[0] for r in rows]
 
-# حالات إدخال البيانات في لوحة التحكم والمحادثات
+# حالات إدخال النصوص
 WAITING_WELCOME_MSG = 1
 WAITING_AFTER_PHOTO_MSG = 2
 WAITING_BROADCAST_MSG = 3
@@ -185,7 +173,6 @@ WAITING_DIRECT_TEXT = 4
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    
     if is_user_banned(user.id):
         return
 
@@ -213,10 +200,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     photo_file = update.message.photo[-1].file_id
-
     caption = f"📸 **وصلتك صورة تأكيد من:**\nالاسم: {user.full_name}\nالآيدي: `{user.id}`"
     await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_file, caption=caption, parse_mode="Markdown")
-
     await update.message.reply_text(get_setting("after_photo_msg"))
 
 
@@ -226,7 +211,6 @@ async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     text = update.message.text
-
     if user.id == ADMIN_ID:
         return
 
@@ -240,7 +224,7 @@ async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("✅ تم استلام رابطك/رسالتك وإرسالها للإدارة.")
 
 
-# ==================== لوحة التحكم للأدمن (Admin Panel) ====================
+# ==================== لوحة التحكم للأدمن (أزرار التنقل المستقلة) ====================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -265,14 +249,16 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def admin_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.from_user.id != ADMIN_ID:
         return
 
-    if query.data == "show_stats":
+    data = query.data
+
+    if data == "show_stats":
         s = get_stats()
         text = (
             f"📊 **إحصائيات البوت التفصيلية:**\n\n"
@@ -285,9 +271,8 @@ async def admin_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         keyboard = [[InlineKeyboardButton("🔙 العودة للوحة الرئيسية", callback_data="main_admin_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        return
 
-    elif query.data == "main_admin_menu":
+    elif data == "main_admin_menu":
         stats = get_stats()
         keyboard = [
             [InlineKeyboardButton("📊 الإحصائيات التفصيلية", callback_data="show_stats")],
@@ -303,25 +288,12 @@ async def admin_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-        return
 
-    elif query.data == "change_welcome":
-        await query.edit_message_text("أرسل الآن **الرسالة الترحيبية الجديدة**:")
-        return WAITING_WELCOME_MSG
-
-    elif query.data == "change_after_photo":
-        await query.edit_message_text("أرسل الآن **الرسالة الجديدة التي تظهر بعد إرسال الصورة**:")
-        return WAITING_AFTER_PHOTO_MSG
-
-    elif query.data == "broadcast":
-        await query.edit_message_text("أرسل **الرسالة الجماعية** التي ترغب بإرسالها لكافة المستخدمين:")
-        return WAITING_BROADCAST_MSG
-
-    elif query.data == "list_users":
+    elif data == "list_users":
         users = get_recent_users(15)
         if not users:
             await query.edit_message_text("❌ لا يوجد مستخدمين مسجلين بعد.")
-            return ConversationHandler.END
+            return
 
         keyboard = []
         for u_id, u_name, banned in users:
@@ -329,17 +301,9 @@ async def admin_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE)
             keyboard.append([InlineKeyboardButton(f"{status} {u_name}", callback_data=f"manage_u_{u_id}")])
         
         keyboard.append([InlineKeyboardButton("🔙 العودة", callback_data="main_admin_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("اختر مستخدماً لمراسلته أو حظره (مرتبين من الأحدث للأقدم):", reply_markup=reply_markup)
-        return
+        await query.edit_message_text("اختر مستخدماً لمراسلته أو حظره (مرتبين من الأحدث للأقدم):", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
-async def user_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-    if data.startswith("manage_u_"):
+    elif data.startswith("manage_u_"):
         target_id = int(data.replace("manage_u_", ""))
         context.user_data['target_user_id'] = target_id
         banned = is_user_banned(target_id)
@@ -356,15 +320,19 @@ async def user_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(data.replace("toggleban_u_", ""))
         new_ban_state = toggle_ban_user(target_id)
         msg = "🔴 تم حظر المستخدم بنجاح!" if new_ban_state else "🟢 تم إلغاء حظر المستخدم بنجاح!"
-        await query.edit_message_text(f"{msg}\n\nالآيدي: `{target_id}`", parse_mode="Markdown")
-        return ConversationHandler.END
+        keyboard = [[InlineKeyboardButton("🔙 العودة لقائمة المستخدمين", callback_data="list_users")]]
+        await query.edit_message_text(f"{msg}\n\nالآيدي: `{target_id}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    elif data.startswith("msg_u_"):
-        target_id = int(data.replace("msg_u_", ""))
-        context.user_data['target_user_id'] = target_id
-        await query.edit_message_text(f"أرسل الآن الرسالة التي تريد توجيهها مباشرة للمستخدم `{target_id}`:", parse_mode="Markdown")
-        return WAITING_DIRECT_TEXT
 
+# ==================== محادثات تعديل الرسائل والإذاعة ====================
+
+async def ask_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        return
+    await query.edit_message_text("أرسل الآن **الرسالة الترحيبية الجديدة**:")
+    return WAITING_WELCOME_MSG
 
 async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_setting("welcome_msg", update.message.text)
@@ -372,11 +340,27 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def ask_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        return
+    await query.edit_message_text("أرسل الآن **الرسالة الجديدة التي تظهر بعد إرسال الصورة**:")
+    return WAITING_AFTER_PHOTO_MSG
+
 async def save_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_setting("after_photo_msg", update.message.text)
     await update.message.reply_text("✅ تم حفظ رسالة ما بعد الصورة بنجاح!")
     return ConversationHandler.END
 
+
+async def ask_broadcast_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        return
+    await query.edit_message_text("أرسل **الرسالة الجماعية** التي ترغب بإرسالها لكافة المستخدمين:")
+    return WAITING_BROADCAST_MSG
 
 async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = update.message.text
@@ -384,7 +368,6 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     success = 0
     failed = 0
-
     for u_id in user_ids:
         try:
             await context.bot.send_message(chat_id=u_id, text=msg_text)
@@ -400,6 +383,18 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def ask_direct_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        return
+    data = query.data
+    if data.startswith("msg_u_"):
+        target_id = int(data.replace("msg_u_", ""))
+        context.user_data['target_user_id'] = target_id
+        await query.edit_message_text(f"أرسل الآن الرسالة التي تريد توجيهها مباشرة للمستخدم `{target_id}`:", parse_mode="Markdown")
+        return WAITING_DIRECT_TEXT
+
 async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_id = context.user_data.get('target_user_id')
     text_to_send = update.message.text
@@ -412,43 +407,66 @@ async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_T
 
     return ConversationHandler.END
 
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم إلغاء العملية.")
     return ConversationHandler.END
 
 
-# ==================== تشغيل البوت في الخلفية مع بدء السيرفر ====================
+# ==================== تشغيل البوت مع FastAPI ====================
 
 def run_telegram_bot():
-    init_db()  # تهيئة قاعدة البيانات
+    init_db()
     telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    admin_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(admin_button_click, pattern="^(change_welcome|change_after_photo|broadcast|list_users|show_stats|main_admin_menu)$"),
-            CallbackQueryHandler(user_management, pattern="^(manage_u_|toggleban_u_|msg_u_)")
-        ],
-        states={
-            WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)],
-            WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)],
-            WAITING_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_broadcast)],
-            WAITING_DIRECT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_direct_message)],
-        },
+    # محادثة تعديل رسالة الترحيب
+    welcome_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
+        states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
+    # محادثة تعديل رسالة ما بعد الصورة
+    after_photo_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_after_photo_msg, pattern="^change_after_photo$")],
+        states={WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    # محادثة الإذاعة
+    broadcast_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_broadcast_msg, pattern="^broadcast$")],
+        states={WAITING_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_broadcast)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    # محادثة المراسلة المباشرة لعضو
+    direct_msg_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_direct_msg, pattern="^msg_u_")],
+        states={WAITING_DIRECT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_direct_message)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    # إضافة المعالجات بالترتيب الصحيح
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("admin", admin_panel))
-    telegram_app.add_handler(admin_conv_handler)
+    
+    # معالج الأزرار العامة والتنقل بين القوائم
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(show_stats|main_admin_menu|list_users|manage_u_|toggleban_u_)$"))
+
+    # إضافة محادثات إدخال النصوص
+    telegram_app.add_handler(welcome_conv)
+    telegram_app.add_handler(after_photo_conv)
+    telegram_app.add_handler(broadcast_conv)
+    telegram_app.add_handler(direct_msg_conv)
+
+    # الرسائل العادية والصور
     telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
 
-    logging.info("Telegram Bot is starting polling...")
-    telegram_app.run_polling()
+    logging.info("Telegram Bot is running polling...")
+    telegram_app.run_polling(drop_pending_updates=True)
 
 @app.on_event("startup")
 def startup_event():
-    # تشغيل البوت في خيط (Thread) منفصل ليعمل بالتوازي مع سيرفر FastAPI
     bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
     bot_thread.start()
