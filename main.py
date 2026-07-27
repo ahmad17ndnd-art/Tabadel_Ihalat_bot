@@ -1,10 +1,8 @@
 import os
 import logging
 import sqlite3
-import threading
 from datetime import datetime, timedelta
-from fastapi import FastAPI
-import uvicorn
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,23 +14,37 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# إعداد التسجيل المفصل لمراقبة أي خطأ
+# إعداد التسجيل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ==================== إعدادات سيرفر الويب ====================
+# ==================== الإعدادات الرئيسية ====================
+BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
+ADMIN_ID = 1922499737
+
+# إعداد تطبيق تيليجرام وتطبيقه مسبقاً للعمل مع الويب هوك
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# ==================== إعدادات سيرفر الويب FastAPI ====================
 app = FastAPI()
 
 @app.get("/")
 def home():
-    return {"status": "Telegram Bot is running smoothly!"}
+    return {"status": "Telegram Bot Webhook is active and running!"}
 
-# ==================== الإعدادات الرئيسية ====================
-BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
-ADMIN_ID = 1922499737
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+        return {"status": "error", "message": str(e)}
 
 # ==================== إدارة قاعدة البيانات (SQLite) ====================
 DB_NAME = "bot_data.db"
@@ -395,58 +407,67 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ==================== التشغيل ====================
-
-def run_telegram_bot():
-    try:
-        init_db()
-        telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-        welcome_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
-            states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-
-        after_photo_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(ask_after_photo_msg, pattern="^change_after_photo$")],
-            states={WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)]},
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-
-        broadcast_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(ask_broadcast_msg, pattern="^broadcast$")],
-            states={WAITING_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_broadcast)]},
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-
-        direct_msg_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(ask_direct_msg, pattern="^msg_u_")],
-            states={WAITING_DIRECT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_direct_message)]},
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-
-        telegram_app.add_handler(CommandHandler("start", start))
-        telegram_app.add_handler(CommandHandler("admin", admin_panel))
-        
-        telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(show_stats|main_admin_menu|list_users)$"))
-        telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^manage_u_"))
-        telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^toggleban_u_"))
-
-        telegram_app.add_handler(welcome_conv)
-        telegram_app.add_handler(after_photo_conv)
-        telegram_app.add_handler(broadcast_conv)
-        telegram_app.add_handler(direct_msg_conv)
-
-        telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
-
-        logger.info("Telegram Bot is running polling...")
-        telegram_app.run_polling(drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"Error in run_telegram_bot: {e}")
+# ==================== تسجيل الهاندلرز وبدء التشغيل ====================
 
 @app.on_event("startup")
-def startup_event():
-    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-    bot_thread.start()
+async def startup_event():
+    init_db()
+    
+    # تسجيل المعالجات (Handlers)
+    welcome_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
+        states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    after_photo_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_after_photo_msg, pattern="^change_after_photo$")],
+        states={WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    broadcast_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_broadcast_msg, pattern="^broadcast$")],
+        states={WAITING_BROADCAST_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_broadcast)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    direct_msg_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_direct_msg, pattern="^msg_u_")],
+        states={WAITING_DIRECT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_direct_message)]},
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("admin", admin_panel))
+    
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(show_stats|main_admin_menu|list_users)$"))
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^manage_u_"))
+    telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^toggleban_u_"))
+
+    telegram_app.add_handler(welcome_conv)
+    telegram_app.add_handler(after_photo_conv)
+    telegram_app.add_handler(broadcast_conv)
+    telegram_app.add_handler(direct_msg_conv)
+
+    telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
+
+    # تهيئة وتشغيل تطبيق تيليجرام
+    await telegram_app.initialize()
+    await telegram_app.start()
+    
+    # ربط الويب هوك تلقائياً برابط مشروعك على Railway (أو استبدله برابطك العام إن وجد)
+    # ملاحظة: تيليجرام سيوجه التحديثات لمسار /webhook على سيرفرك
+    railway_url = os.environ.get("RAILWAY_STATIC_URL") or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_url:
+        webhook_url = f"https://{railway_url}/webhook"
+        await telegram_app.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set successfully to: {webhook_url}")
+    else:
+        logger.warning("Railway URL not found in environment variables. Please set webhook manually if needed.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await telegram_app.stop()
+    await telegram_app.shutdown()
