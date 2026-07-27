@@ -23,9 +23,9 @@ logging.basicConfig(
 )
 
 # ==================== إعدادات سيرفر الويب (لترضية Railway) ====================
-app = FastAPI()
+web_app = FastAPI()
 
-@app.get("/")
+@web_app.get("/")
 def home():
     return {"status": "Telegram Bot is running smoothly!"}
 
@@ -431,6 +431,7 @@ def main():
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
 
+    # استخدام app للتيليجرام و web_app للـ FastAPI لتجنب تداخل المتغيرات
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     admin_conv_handler = ConversationHandler(
