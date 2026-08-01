@@ -81,8 +81,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== لوحة الإدارة ====================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Admin command received")  # لتأكيد استقبال الأمر
     if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 ليس لديك صلاحية الوصول إلى لوحة الإدارة.")
         return
+
     keyboard = [
         [InlineKeyboardButton("📊 إحصائيات تفصيلية", callback_data="show_stats")],
         [InlineKeyboardButton("📢 إرسال رسالة جماعية", callback_data="broadcast")],
@@ -91,6 +94,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📸 تعديل رسالة بعد الصورة", callback_data="change_after_photo")],
         [InlineKeyboardButton("🚫 حظر مستخدم بالاسم", callback_data="ban_user_list")],
     ]
+
     await update.message.reply_text("لوحة الإدارة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ==================== إدارة المستخدمين + الحظر ====================
@@ -158,22 +162,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             f"📊 الإحصائيات:\nإجمالي المستخدمين: {total}\nالنشطون ✅: {active}\nالمحظورون 🚫: {banned}"
         )
 
-# ==================== الرسالة الترحيبية ====================
-async def ask_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الرسالة الترحيبية الجديدة:")
-    return WAITING_WELCOME_MSG
-
-async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET welcome_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("تم حفظ الرسالة الترحيبية ✔")
-    return ConversationHandler.END
-
 # ==================== استقبال الصور ====================
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_NAME)
@@ -218,7 +206,7 @@ async def startup_event():
 
     railway_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
     if railway_url:
-        webhook_url = f"https://{railway_url}/webhook"
+        webhook_url = f"https://{railway_url.strip()}/webhook"
         await telegram_app.bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook set successfully to: {webhook_url}")
     else:
@@ -228,4 +216,3 @@ async def startup_event():
 async def shutdown_event():
     await telegram_app.stop()
     await telegram_app.shutdown()
-
