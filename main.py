@@ -225,3 +225,7 @@ async def startup_event():
         logger.warning("Railway URL not found in environment variables. Please set webhook manually if needed.")
 
 @app.on_event("shutdown")
+async def shutdown_event():
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
