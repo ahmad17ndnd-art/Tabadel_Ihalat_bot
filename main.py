@@ -174,49 +174,54 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم حفظ الرسالة الترحيبية ✔")
     return ConversationHandler.END
 
-# ==================== رسالة بعد الصورة ====================
-async def ask_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الرسالة التي تظهر بعد الصورة:")
-    return WAITING_AFTER_PHOTO_MSG
-
-async def save_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
+# ==================== استقبال الصور ====================
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE settings SET after_photo_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
+    c.execute("SELECT after_photo_msg FROM settings WHERE id = 1")
+    msg = c.fetchone()[0]
     conn.close()
-    await update.message.reply_text("تم حفظ رسالة بعد الصورة ✔")
-    return ConversationHandler.END
+    await update.message.reply_text(msg)
 
-# ==================== الرسالة الجماعية ====================
-async def ask_broadcast_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الآن نص الرسالة الجماعية:")
-    return WAITING_BROADCAST_MSG
+# ==================== استقبال النصوص ====================
+async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text
+    await telegram_app.bot.send_message(
+        ADMIN_ID,
+        f"📩 رسالة جديدة من {user.username}:\n{text}"
+    )
+    await update.message.reply_text("تم استلام رسالتك ✅")
 
-async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT user_id FROM users WHERE banned = 0")
-    users = c.fetchall()
-    conn.close()
-    sent = 0
-    for u in users:
-        try:
-            await telegram_app.bot.send_message(u[0], msg)
-            sent += 1
-        except Exception as e:
-            logger.error(f"Error sending to {u[0]}: {e}")
-    await update.message.reply_text(f"تم إرسال الرسالة إلى {sent} مستخدم ✔")
-    return ConversationHandler.END
+# ==================== FastAPI ====================
+@app.get("/")
+def home():
+    return {"status": "Telegram Bot is running smoothly!"}
 
-# ==================== الرسالة الفردية ====================
-async def ask_direct_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    user_id = int(update.callback_query.data.replace("msg_u_", ""))
-    context.user_data["target_user"] = user_id
-    await update.callback_query.message.reply_text("أرسل الآن نص الرسالة:")
-    return
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+        return {"status": "error", "message": str(e)}
+
+# ==================== تشغيل البوت على Railway ====================
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    railway_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
+    if railway_url:
+        webhook_url = f"https://{railway_url}/webhook"
+        await telegram_app.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set successfully to: {webhook_url}")
+    else:
+        logger.warning("Railway URL not found in environment variables. Please set webhook manually if needed.")
+
+@app.on_event("shutdown")
