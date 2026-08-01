@@ -61,6 +61,7 @@ WAITING_WELCOME_MSG = 1
 WAITING_AFTER_PHOTO_MSG = 2
 WAITING_BROADCAST_MSG = 3
 WAITING_DIRECT_TEXT = 4
+WAITING_BAN_NAME = 5
 
 # ==================== /start ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,11 +84,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [InlineKeyboardButton("إحصائيات تفصيلية 📊", callback_data="show_stats")],
-        [InlineKeyboardButton("إرسال رسالة جماعية 📢", callback_data="broadcast")],
-        [InlineKeyboardButton("إرسال رسالة لمستخدم 💬", callback_data="list_users")],
-        [InlineKeyboardButton("تعديل الرسالة الترحيبية ✏️", callback_data="change_welcome")],
-        [InlineKeyboardButton("تعديل رسالة بعد الصورة 📸", callback_data="change_after_photo")],
+        [InlineKeyboardButton("📊 إحصائيات تفصيلية", callback_data="show_stats")],
+        [InlineKeyboardButton("📢 إرسال رسالة جماعية", callback_data="broadcast")],
+        [InlineKeyboardButton("💬 إرسال رسالة لمستخدم", callback_data="list_users")],
+        [InlineKeyboardButton("✏️ تعديل الرسالة الترحيبية", callback_data="change_welcome")],
+        [InlineKeyboardButton("📸 تعديل رسالة بعد الصورة", callback_data="change_after_photo")],
+        [InlineKeyboardButton("🚫 حظر مستخدم بالاسم", callback_data="ban_user")],
     ]
 
     await update.message.reply_text("لوحة الإدارة:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -101,7 +103,9 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
     if data == "list_users":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("SELECT user_id, username, banned FROM users")
+
+        # ترتيب من الأحدث إلى الأقدم
+        c.execute("SELECT user_id, username, banned FROM users ORDER BY user_id DESC")
         users = c.fetchall()
         conn.close()
 
@@ -110,12 +114,12 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             status = "محظور 🚫" if banned else "نشط ✅"
 
             keyboard = [
-                [InlineKeyboardButton("إرسال رسالة 💬", callback_data=f"msg_u_{uid}")],
-                [InlineKeyboardButton("حظر / إلغاء حظر 🚫✅", callback_data=f"toggleban_u_{uid}")]
+                [InlineKeyboardButton("💬 إرسال رسالة", callback_data=f"msg_u_{uid}")],
+                [InlineKeyboardButton("🚫 / ✅ حظر / إلغاء حظر", callback_data=f"toggleban_u_{uid}")]
             ]
 
             await query.message.reply_text(
-                f"المستخدم: {uname}\nID: {uid}\nالحالة: {status}",
+                f"الاسم: {uname}\nID: {uid}\nالحالة: {status}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
@@ -152,6 +156,33 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             f"المستخدمون المحظورون 🚫: {banned}"
         )
 
+# ==================== الحظر اليدوي بالاسم ====================
+async def ask_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("أرسل الآن اسم المستخدم الذي تريد حظره:")
+    return WAITING_BAN_NAME
+
+async def process_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE username = ?", (name,))
+    result = c.fetchone()
+
+    if not result:
+        await update.message.reply_text("❌ لم يتم العثور على مستخدم بهذا الاسم")
+        return ConversationHandler.END
+
+    uid = result[0]
+
+    c.execute("UPDATE users SET banned = 1 WHERE user_id = ?", (uid,))
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(f"🚫 تم حظر المستخدم {name} بنجاح")
+    return ConversationHandler.END
+
 # ==================== الرسالة الترحيبية ====================
 async def ask_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
@@ -167,7 +198,7 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    await update.message.reply_text("تم حفظ الرسالة الترحيبية بنجاح ✔")
+    await update.message.reply_text("تم حفظ الرسالة الترحيبية ✔")
     return ConversationHandler.END
 
 # ==================== رسالة بعد الصورة ====================
@@ -275,6 +306,12 @@ direct_msg_conv = ConversationHandler(
     fallbacks=[]
 )
 
+ban_user_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_ban_user, pattern="^ban_user$")],
+    states={WAITING_BAN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_ban_user)]},
+    fallbacks=[]
+)
+
 # ==================== تسجيل الهاندلرز ====================
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("admin", admin_panel))
@@ -285,6 +322,7 @@ telegram_app.add_handler(welcome_conv)
 telegram_app.add_handler(after_photo_conv)
 telegram_app.add_handler(broadcast_conv)
 telegram_app.add_handler(direct_msg_conv)
+telegram_app.add_handler(ban_user_conv)
 
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
