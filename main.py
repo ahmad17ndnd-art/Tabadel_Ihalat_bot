@@ -210,5 +210,25 @@ async def telegram_webhook(request: Request):
         await telegram_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-       logger.error(f"Error processing update: {e}")
+        logger.error(f"Error processing update: {e}")
+        return {"status": "error", "message": str(e)}
 
+# ==================== تشغيل البوت ====================
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    railway_url = os.environ.get("RAILWAY_STATIC_URL") or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_url:
+        webhook_url = f"https://{railway_url}/webhook"
+        await telegram_app.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set successfully to: {webhook_url}")
+    else:
+        logger.warning("Railway URL not found in environment variables. Please set webhook manually if needed.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await telegram_app.stop()
+    await telegram_app.shutdown()
