@@ -210,4 +210,5 @@ async def telegram_webhook(request: Request):
         await telegram_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Error processing update: {
+       logger.error(f"Error processing update: {e}")
+
