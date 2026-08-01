@@ -264,6 +264,10 @@ telegram_app.add_handler(CommandHandler("admin", admin_panel))
 
 telegram_app.add_handler(CallbackQueryHandler(admin_navigation_click, pattern="^(list_users|toggleban_u_.*)$"))
 
+# 🔥 إصلاح المشكلة هنا
+telegram_app.add_handler(CallbackQueryHandler(ask_broadcast_msg, pattern="^broadcast$"))
+telegram_app.add_handler(CallbackQueryHandler(ask_direct_msg, pattern="^msg_u_"))
+
 telegram_app.add_handler(welcome_conv)
 telegram_app.add_handler(after_photo_conv)
 telegram_app.add_handler(broadcast_conv)
