@@ -173,7 +173,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 مستخدم جديد دخل:\nالاسم: {user.username or user.full_name}\nID: {user.id}"
             )
     except Exception as e:
-        logger.error(f"Failed to notify admin about new user: {e})
+        logger.error(f"Failed to notify admin about new user: {e}")
 
 # ==================== لوحة الإدارة ====================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
