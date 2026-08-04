@@ -64,7 +64,7 @@ WAITING_BROADCAST_MSG = 3
 WAITING_DIRECT_TEXT = 4
 WAITING_BAN_NAME = 5
 
-# ==================== دوال التفاعل (معرفة قبل ConversationHandlers) ====================
+# ==================== دوال التفاعل ====================
 
 # --- ترحيب /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,8 +72,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?, ?, ?)",
-              (user.id, user.username, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    c.execute(
+        "INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?, ?, ?)",
+        (user.id, user.username or user.full_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
     conn.commit()
 
     c.execute("SELECT welcome_msg FROM settings WHERE id = 1")
@@ -84,10 +86,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # إشعار فوري للأدمن عند دخول مستخدم جديد
     try:
-        await telegram_app.bot.send_message(
-            ADMIN_ID,
-            f"👤 مستخدم جديد دخل:\nالاسم: {user.username}\nID: {user.id}"
-        )
+        if user.id != ADMIN_ID:
+            await telegram_app.bot.send_message(
+                ADMIN_ID,
+                f"👤 مستخدم جديد دخل:\nالاسم: {user.username or user.full_name}\nID: {user.id}"
+            )
     except Exception as e:
         logger.error(f"Failed to notify admin about new user: {e}")
 
@@ -107,13 +110,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("لوحة الإدارة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- إدارة المستخدمين وعمليات الحظر والإرسال ---
+# --- إدارة المستخدمين ---
 async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     await query.answer()
 
-    # قائمة الحظر بالأسماء (مرتبة من الأحدث إلى الأقدم)
     if data == "ban_user_list":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -135,7 +137,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    # تنفيذ الحظر من قائمة الأسماء
     if data.startswith("ban_u_"):
         uid = int(data.replace("ban_u_", ""))
         conn = sqlite3.connect(DB_NAME)
@@ -146,7 +147,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("🚫 تم حظر المستخدم بنجاح")
         return
 
-    # قائمة إرسال الرسالة (مرتبة من الأحدث إلى الأقدم)
     if data == "list_users":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -170,7 +170,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    # تبديل حالة الحظر من قائمة المستخدمين
     if data.startswith("toggleban_u_"):
         uid = int(data.replace("toggleban_u_", ""))
         conn = sqlite3.connect(DB_NAME)
@@ -189,7 +188,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("تم تحديث حالة المستخدم 🚫✅")
         return
 
-    # إحصائيات
     if data == "show_stats":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -209,10 +207,7 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # فتح تعديل الرسائل أو البث أو غيرها يتم عبر ConversationHandlers المعرفة لاحقاً
-    # لا نغلق هنا لأن بعض الأنماط يتم التعامل معها في ConversationHandlers
-
-# --- حظر بالاسم (إذا أردت استخدام إدخال اسم يدوياً) ---
+# --- حظر بالاسم ---
 async def ask_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("أرسل الآن اسم المستخدم الذي تريد حظره:")
@@ -301,7 +296,7 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"تم إرسال الرسالة إلى {sent} مستخدم ✔")
     return ConversationHandler.END
 
-# --- رسالة فردية (اختيار المستخدم ثم إرسال النص) ---
+# --- رسالة فردية ---
 async def ask_direct_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     user_id = int(update.callback_query.data.replace("msg_u_", ""))
@@ -324,8 +319,11 @@ async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_T
 
     return ConversationHandler.END
 
-# --- استقبال الصور ---
+# --- استقبال الصور (إصلاح كامل) ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    photo = update.message.photo[-1].file_id
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT after_photo_msg FROM settings WHERE id = 1")
@@ -334,23 +332,39 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# --- استقبال النصوص + إشعار للأدمن ---
+    # إرسال الصورة للأدمن
+    try:
+        if user.id != ADMIN_ID:
+            await telegram_app.bot.send_photo(
+                ADMIN_ID,
+                photo,
+                caption=f"📸 صورة جديدة من {user.username or user.full_name} (ID: {user.id})"
+            )
+    except Exception as e:
+        logger.error(f"Failed to send photo to admin: {e}")
+
+# --- استقبال النصوص + إصلاح إشعارات الأدمن ---
 async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
+
+    # تجاهل رسائل الأدمن
+    if user.id == ADMIN_ID:
+        await update.message.reply_text(f"استلمت رسالتك: {text}")
+        return
 
     # إشعار للأدمن
     try:
         await telegram_app.bot.send_message(
             ADMIN_ID,
-            f"📩 رسالة جديدة من {user.username}:\n{text}"
+            f"📩 رسالة جديدة من {user.username or user.full_name}:\n{text}"
         )
     except Exception as e:
         logger.error(f"Failed to notify admin about message: {e}")
 
     await update.message.reply_text(f"استلمت رسالتك: {text}")
 
-# ==================== ConversationHandlers (بعد تعريف الدوال) ====================
+# ==================== ConversationHandlers ====================
 welcome_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
     states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
