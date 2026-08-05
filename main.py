@@ -23,8 +23,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==================== الإعدادات الرئيسية ====================
-BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
-ADMIN_ID = 1922499737
+BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
+ADMIN_ID = 123456789  # ضع ID الأدمن هنا
 
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 app = FastAPI()
@@ -37,7 +37,6 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # جدول المستخدمين (فخم + نقاط + إحالات + تفعيل وهمي + حالة المهمة)
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -54,23 +53,23 @@ def init_db():
         )
     """)
 
-    # جدول الإعدادات (رسائل + رابط تفعيل + رسالة فشل + رسائل إضافية + مهمة واحدة + اسم زر المهام)
     c.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY,
             welcome_msg TEXT DEFAULT '👋 أهلاً بك في بوت النقاط والإحالات الفخم!',
             after_photo_msg TEXT DEFAULT '📸 تم استلام الصورة بنجاح، شكراً لمشاركتك!',
-            verify_link TEXT DEFAULT 'https://t.me/ATF_AIRDROP_bot',
+            verify_link TEXT DEFAULT 'https://t.me/example_bot',
             verify_fail_msg TEXT DEFAULT '❌ لم يتم التفعيل.\nيرجى فتح رابط التفعيل أولاً ثم الضغط على زر "✅ أنا فعلت الحساب".',
-            activation_msg TEXT DEFAULT '🔐 حالة حسابك الحالية: {status}\n\nلتفعيل الحساب (نظام تفعيل وهمي فخم):\n1️⃣ اضغط زر "🔗 فتح رابط التفعيل".\n2️⃣ افتح الرابط واشترك هناك (اختياري).\n3️⃣ ارجع للبوت واضغط زر "✅ أنا فعلت الحساب".\n\nعند الضغط على زر التفعيل، سيتم منحك نقاط وتفعيل حسابك داخل هذا البوت.',
+            activation_msg TEXT DEFAULT '🔐 حالة حسابك الحالية: {status}',
             first_entry_msg TEXT DEFAULT '👋 أهلاً بك في أول دخول لك إلى البوت الفخم!',
-            first_sub_msg TEXT DEFAULT '📌 للاشتراك الإجباري: يرجى الانضمام إلى القناة/البوت المطلوب ثم العودة لإكمال الاستخدام.',
+            first_sub_msg TEXT DEFAULT 'عذراً عزيزي عليك الاشتراك بالبوت التالي',
             tasks_button_name TEXT DEFAULT '📝 المهام',
             task_title TEXT DEFAULT '🎯 مهمة اليوم',
             task_text TEXT DEFAULT 'اشترك بالقناة لتحصل على المكافأة',
             task_url TEXT DEFAULT 'https://t.me/example',
             task_points INTEGER DEFAULT 100,
-            task_type TEXT DEFAULT 'subscribe'
+            task_type TEXT DEFAULT 'subscribe',
+            task_complete_msg TEXT DEFAULT '🎁 تم سحب المكافأة بنجاح! 💰 حصلت على نقاطك.'
         )
     """)
 
@@ -92,6 +91,8 @@ WAITING_FIRST_ENTRY_MSG = 9
 WAITING_FIRST_SUB_MSG = 10
 WAITING_TASKS_BUTTON_NAME = 11
 WAITING_TASK_MISSION_TEXT = 12
+WAITING_TASK_POINTS = 13
+WAITING_TASK_COMPLETE_MSG = 14
 
 # ==================== دوال مساعدة ====================
 
@@ -101,7 +102,7 @@ def get_settings():
     c.execute("""
         SELECT welcome_msg, after_photo_msg, verify_link, verify_fail_msg,
                activation_msg, first_entry_msg, first_sub_msg,
-               tasks_button_name, task_title, task_text, task_url, task_points, task_type
+               tasks_button_name, task_title, task_text, task_url, task_points, task_type, task_complete_msg
         FROM settings WHERE id = 1
     """)
     row = c.fetchone()
@@ -120,6 +121,7 @@ def get_settings():
         "task_url": row[10],
         "task_points": row[11],
         "task_type": row[12],
+        "task_complete_msg": row[13],
     }
 
 
@@ -261,7 +263,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ==================== /start مع إحالات ====================
+# ==================== /start مع رسالة واحدة + زرين ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -283,34 +285,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    # إحالات + نقاط لصاحب الإحالة
     if ref_by and ref_by != user.id:
         add_referral(ref_by)
         add_points(ref_by, 150)
 
     settings = get_settings()
 
-    # رسالة أول دخول (قبل أي شيء)
-    await update.message.reply_text(settings["first_entry_msg"])
-    # رسالة الاشتراك الإجباري
-    await update.message.reply_text(settings["first_sub_msg"])
-    # الرسالة الترحيبية
-    await update.message.reply_text(settings["welcome_msg"])
+    keyboard = [
+        [InlineKeyboardButton("🔗 فتح البوت", url=settings["verify_link"])],
+        [InlineKeyboardButton("✅ التحقق من الاشتراك", callback_data="user_first_verify")],
+    ]
 
-    await send_main_menu(update, context)
-
-    # إشعار للأدمن
-    try:
-        if user.id != ADMIN_ID:
-            await telegram_app.bot.send_message(
-                ADMIN_ID,
-                f"👤 مستخدم جديد دخل:\nالاسم: {user.username or user.full_name}\nID: {user.id}"
-            )
-    except Exception as e:
-        logger.error(f"Failed to notify admin about new user: {e}")
+    await update.message.reply_text(settings["first_sub_msg"], reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ==================== لوحة الإدارة الفخمة ====================
+# ==================== لوحة الإدارة ====================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -318,24 +307,15 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("📊 إحصائيات تفصيلية", callback_data="show_stats")],
+        [InlineKeyboardButton("💰 نقاط كل مستخدم", callback_data="users_points")],
         [InlineKeyboardButton("🏆 أفضل 20 مستخدم بالنقاط", callback_data="admin_top20")],
-        [InlineKeyboardButton("📋 عرض كل المستخدمين (حسب النقاط)", callback_data="list_users")],
-        [InlineKeyboardButton("📢 إرسال رسالة جماعية", callback_data="broadcast")],
-        [InlineKeyboardButton("💬 إرسال رسالة لمستخدم", callback_data="list_users_msg")],
-        [InlineKeyboardButton("✏️ تعديل الرسالة الترحيبية", callback_data="change_welcome")],
-        [InlineKeyboardButton("📸 تعديل رسالة بعد الصورة", callback_data="change_after_photo")],
-        [InlineKeyboardButton("🔗 تعديل رابط التفعيل", callback_data="change_verify_link")],
-        [InlineKeyboardButton("⚠️ تعديل رسالة فشل التفعيل", callback_data="change_verify_fail_msg")],
-        [InlineKeyboardButton("✏️ تعديل رسالة التفعيل", callback_data="change_activation_msg")],
-        [InlineKeyboardButton("✏️ تعديل رسالة أول دخول", callback_data="change_first_entry_msg")],
-        [InlineKeyboardButton("✏️ تعديل رسالة الاشتراك الإجباري", callback_data="change_first_sub_msg")],
-        [InlineKeyboardButton("✏️ تعديل اسم زر المهام", callback_data="change_tasks_button_name")],
-        [InlineKeyboardButton("✏️ تعديل مهمة المهام", callback_data="change_task_mission")],
-        [InlineKeyboardButton("🚫 حظر مستخدم بالاسم", callback_data="ban_user")],
+        [InlineKeyboardButton("✉️ إدارة الإرسال", callback_data="admin_send_menu")],
+        [InlineKeyboardButton("✏️ تعديل الرسائل", callback_data="admin_messages_menu")],
+        [InlineKeyboardButton("📝 إدارة المهام", callback_data="admin_tasks_menu")],
     ]
 
     await update.message.reply_text(
-        "🧑‍💼 لوحة الإدارة الفخمة:\nاختر ما تريد من الخيارات التالية:",
+        "🧑‍💼 لوحة الإدارة المتقدمة:\nاختر من الخيارات التالية:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -345,7 +325,36 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     await query.answer()
 
-    # قائمة المستخدمين للحظر بالزر
+    # منيو الإرسال
+    if data == "admin_send_menu":
+        keyboard = [
+            [InlineKeyboardButton("💬 إرسال رسالة فردية", callback_data="list_users_msg")],
+            [InlineKeyboardButton("📢 إرسال رسالة جماعية", callback_data="broadcast")],
+            [InlineKeyboardButton("🚫 إدارة الحظر", callback_data="ban_user_list")],
+        ]
+        await query.message.reply_text("اختر نوع الإرسال:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # منيو تعديل الرسائل
+    if data == "admin_messages_menu":
+        keyboard = [
+            [InlineKeyboardButton("✏️ تعديل الرسالة الأولى (عذراً عزيزي)", callback_data="change_first_sub_msg")],
+            [InlineKeyboardButton("✏️ تعديل الرسالة الترحيبية", callback_data="change_welcome")],
+            [InlineKeyboardButton("🔗 تعديل الرابط الإجباري الأول", callback_data="change_verify_link")],
+        ]
+        await query.message.reply_text("اختر ما تريد تعديله:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # منيو المهام
+    if data == "admin_tasks_menu":
+        keyboard = [
+            [InlineKeyboardButton("➕ إضافة مهمة جديدة", callback_data="change_task_mission")],
+            [InlineKeyboardButton("✏️ تعديل رسالة إتمام المهمة", callback_data="change_task_complete_msg")],
+        ]
+        await query.message.reply_text("إدارة المهام:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # باقي الهاندلرز الإدارية (نفس كودك القديم تقريبًا)
     if data == "ban_user_list":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -377,11 +386,10 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("🚫 تم حظر المستخدم بنجاح")
         return
 
-    # عرض كل المستخدمين مرتبين حسب النقاط
-    if data == "list_users":
+    if data == "users_points":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("SELECT user_id, username, banned, points, referrals, verified FROM users ORDER BY points DESC")
+        c.execute("SELECT user_id, username, points FROM users ORDER BY points DESC")
         users = c.fetchall()
         conn.close()
 
@@ -389,24 +397,13 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             await query.message.reply_text("لا يوجد مستخدمين مسجلين.")
             return
 
-        for uid, uname, banned, points, refs, ver in users:
-            status = "محظور 🚫" if banned else "نشط ✅"
-            vstatus = "مفعّل ✅" if ver else "غير مفعّل ❌"
-            keyboard = [
-                [InlineKeyboardButton("💬 إرسال رسالة", callback_data=f"msg_u_{uid}")],
-                [InlineKeyboardButton("🚫 / ✅ حظر / إلغاء حظر", callback_data=f"toggleban_u_{uid}")]
-            ]
-            await query.message.reply_text(
-                f"👤 {uname}\nID: {uid}\n"
-                f"الحالة: {status}\n"
-                f"التفعيل: {vstatus}\n"
-                f"💰 النقاط: {points}\n"
-                f"👥 الإحالات: {refs}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+        text = "💰 نقاط كل مستخدم:\n\n"
+        for uid, uname, pts in users:
+            text += f"👤 {uname} (ID: {uid}) — {pts} نقطة\n"
+
+        await query.message.reply_text(text)
         return
 
-    # قائمة المستخدمين لإرسال رسالة فردية
     if data == "list_users_msg":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -428,25 +425,10 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    if data.startswith("toggleban_u_"):
-        uid = int(data.replace("toggleban_u_", ""))
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT banned FROM users WHERE user_id = ?", (uid,))
-        row = c.fetchone()
-        if row is None:
-            conn.close()
-            await query.message.reply_text("المستخدم غير موجود.")
-            return
-        banned = row[0]
-        new_status = 0 if banned else 1
-        c.execute("UPDATE users SET banned = ? WHERE user_id = ?", (new_status, uid))
-        conn.commit()
-        conn.close()
-        await query.message.reply_text("تم تحديث حالة المستخدم 🚫✅")
+    if data.startswith("msg_u_"):
+        # هذا يُستخدم مع ConversationHandler الخاص بالرسالة الفردية
         return
 
-    # إحصائيات تفصيلية
     if data == "show_stats":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -472,7 +454,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # أفضل 20 مستخدم بالنقاط (للأدمن)
     if data == "admin_top20":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -543,26 +524,26 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def ask_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_first_sub_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الرسالة التي تظهر بعد الصورة (فخمة):")
-    return WAITING_AFTER_PHOTO_MSG
+    await update.callback_query.message.reply_text("أرسل نص الرسالة الأولى (مثال: عذراً عزيزي عليك الاشتراك بالبوت التالي):")
+    return WAITING_FIRST_SUB_MSG
 
 
-async def save_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_first_sub_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE settings SET after_photo_msg = ? WHERE id = 1", (msg,))
+    c.execute("UPDATE settings SET first_sub_msg = ? WHERE id = 1", (msg,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("تم حفظ رسالة بعد الصورة ✔")
+    await update.message.reply_text("تم حفظ الرسالة الأولى ✔")
     return ConversationHandler.END
 
 
 async def ask_verify_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رابط البوت/المصدر الذي تريد استخدامه للتفعيل (وهمي):")
+    await update.callback_query.message.reply_text("أرسل الرابط الإجباري الجديد (مثلاً رابط بوت الاشتراك):")
     return WAITING_VERIFY_LINK
 
 
@@ -577,132 +558,55 @@ async def save_verify_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def ask_verify_fail_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_task_complete_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رسالة الفشل التي تظهر إذا لم يتم التفعيل (فخمة):")
-    return WAITING_VERIFY_FAIL_MSG
+    await update.callback_query.message.reply_text("أرسل الرسالة التي تظهر للمستخدم عند إنجاز المهمة:")
+    return WAITING_TASK_COMPLETE_MSG
 
 
-async def save_verify_fail_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET verify_fail_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("تم حفظ رسالة الفشل ✔")
-    return ConversationHandler.END
-
-
-async def ask_activation_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل نص رسالة التفعيل (تظهر في قائمة تفعيل الحساب):")
-    return WAITING_ACTIVATION_MSG
-
-
-async def save_activation_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET activation_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("تم حفظ رسالة التفعيل ✔")
-    return ConversationHandler.END
-
-
-async def ask_first_entry_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رسالة أول دخول (تظهر قبل أي شيء):")
-    return WAITING_FIRST_ENTRY_MSG
-
-
-async def save_first_entry_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET first_entry_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("تم حفظ رسالة أول دخول ✔")
-    return ConversationHandler.END
-
-
-async def ask_first_sub_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رسالة الاشتراك الإجباري (الرسالة الأولى):")
-    return WAITING_FIRST_SUB_MSG
-
-
-async def save_first_sub_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET first_sub_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("تم حفظ رسالة الاشتراك الإجباري ✔")
-    return ConversationHandler.END
-
-
-async def ask_tasks_button_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الاسم الجديد لزر المهام (مثال: 📝 المهام اليومية):")
-    return WAITING_TASKS_BUTTON_NAME
-
-
-async def save_tasks_button_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_task_complete_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE settings SET tasks_button_name = ? WHERE id = 1", (msg,))
+    c.execute("UPDATE settings SET task_complete_msg = ? WHERE id = 1", (msg,))
     conn.commit()
     conn.close()
-    await update.message.reply_text("تم حفظ اسم زر المهام ✔")
+    await update.message.reply_text("✔ تم حفظ رسالة إتمام المهمة بنجاح")
     return ConversationHandler.END
 
 
 async def ask_task_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    txt = (
-        "أرسل الآن تفاصيل المهمة بالشكل التالي (كل سطر لوحده):\n\n"
-        "1️⃣ عنوان المهمة (مثال: 🎯 اشترك بالقناة)\n"
-        "2️⃣ نص المهمة (مثال: اشترك بالقناة لتحصل على المكافأة)\n"
-        "3️⃣ الرابط (مثال: https://t.me/yourchannel)\n"
-        "4️⃣ عدد النقاط (مثال: 150)\n"
-        "5️⃣ نوع المهمة (subscribe / bot / wheel / other)\n\n"
-        "أرسلهم في رسالة واحدة، كل سطر لوحده."
-    )
+    txt = "أرسل الآن نص المهمة كما تريد (أي عدد أسطر، أي صياغة):"
     await update.callback_query.message.reply_text(txt)
     return WAITING_TASK_MISSION_TEXT
 
 
 async def save_task_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text.strip().split("\n")
-    if len(msg) < 5:
-        await update.message.reply_text("❌ يجب أن ترسل 5 أسطر كما هو موضح في التعليمات.")
-        return ConversationHandler.END
+    msg = update.message.text.strip()
+    context.user_data["task_text_temp"] = msg
+    await update.message.reply_text("كم عدد النقاط التي تريد منحها لهذه المهمة؟")
+    return WAITING_TASK_POINTS
 
-    title = msg[0].strip()
-    text = msg[1].strip()
-    url = msg[2].strip()
+
+async def save_task_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = context.user_data.get("task_text_temp", "")
     try:
-        points = int(msg[3].strip())
+        points = int(update.message.text.strip())
     except Exception:
         points = 0
-    task_type = msg[4].strip()
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
         UPDATE settings
-        SET task_title = ?, task_text = ?, task_url = ?, task_points = ?, task_type = ?
+        SET task_text = ?, task_points = ?
         WHERE id = 1
-    """, (title, text, url, points, task_type))
+    """, (text, points))
     conn.commit()
     conn.close()
 
-    await update.message.reply_text("✔ تم حفظ تفاصيل المهمة بنجاح")
+    await update.message.reply_text("✔ تم حفظ تفاصيل المهمة وعدد النقاط بنجاح")
     return ConversationHandler.END
 
 
@@ -770,7 +674,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings = get_settings()
     await update.message.reply_text(settings["after_photo_msg"])
 
-    # نقاط مقابل إرسال صورة
     add_points(user.id, 20)
 
     try:
@@ -790,12 +693,10 @@ async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     text = update.message.text
 
-    # رسائل الأدمن لا تُحسب نقاط
     if user.id == ADMIN_ID:
         await update.message.reply_text(f"استلمت رسالتك: {text}")
         return
 
-    # نقاط مقابل إرسال رسالة
     add_points(user.id, 10)
 
     try:
@@ -819,6 +720,12 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
 
     points, referrals, verified = get_user_info(user.id)
     settings = get_settings()
+
+    if data == "user_first_verify":
+        await query.message.reply_text(settings["welcome_msg"])
+        fake_update = Update(update.update_id, message=query.message)
+        await send_main_menu(fake_update, context)
+        return
 
     if data == "user_points":
         level = "🥉 مبتدئ"
@@ -994,11 +901,7 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
 
         set_task_completed(user.id)
         add_points(user.id, settings["task_points"])
-        await query.message.reply_text(
-            f"🎁 تم سحب المكافأة بنجاح!\n"
-            f"💰 حصلت على {settings['task_points']} نقطة.\n"
-            f"✅ هذه المهمة لن تظهر لك مرة أخرى."
-        )
+        await query.message.reply_text(settings["task_complete_msg"])
         return
 
 
@@ -1007,12 +910,6 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
 welcome_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(ask_welcome_msg, pattern="^change_welcome$")],
     states={WAITING_WELCOME_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_welcome_msg)]},
-    fallbacks=[]
-)
-
-after_photo_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_after_photo_msg, pattern="^change_after_photo$")],
-    states={WAITING_AFTER_PHOTO_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_after_photo_msg)]},
     fallbacks=[]
 )
 
@@ -1040,39 +937,24 @@ verify_link_conv = ConversationHandler(
     fallbacks=[]
 )
 
-verify_fail_msg_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_verify_fail_msg, pattern="^change_verify_fail_msg$")],
-    states={WAITING_VERIFY_FAIL_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_verify_fail_msg)]},
-    fallbacks=[]
-)
-
-activation_msg_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_activation_msg, pattern="^change_activation_msg$")],
-    states={WAITING_ACTIVATION_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_activation_msg)]},
-    fallbacks=[]
-)
-
-first_entry_msg_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_first_entry_msg, pattern="^change_first_entry_msg$")],
-    states={WAITING_FIRST_ENTRY_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_first_entry_msg)]},
-    fallbacks=[]
-)
-
 first_sub_msg_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(ask_first_sub_msg, pattern="^change_first_sub_msg$")],
     states={WAITING_FIRST_SUB_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_first_sub_msg)]},
     fallbacks=[]
 )
 
-tasks_button_name_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_tasks_button_name, pattern="^change_tasks_button_name$")],
-    states={WAITING_TASKS_BUTTON_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_tasks_button_name)]},
+task_mission_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_task_mission, pattern="^change_task_mission$")],
+    states={
+        WAITING_TASK_MISSION_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_mission)],
+        WAITING_TASK_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_points)],
+    },
     fallbacks=[]
 )
 
-task_mission_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_mission, pattern="^change_task_mission$")],
-    states={WAITING_TASK_MISSION_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_mission)]},
+task_complete_msg_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_task_complete_msg, pattern="^change_task_complete_msg$")],
+    states={WAITING_TASK_COMPLETE_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_complete_msg)]},
     fallbacks=[]
 )
 
@@ -1083,25 +965,21 @@ telegram_app.add_handler(CommandHandler("admin", admin_panel))
 
 telegram_app.add_handler(CallbackQueryHandler(
     admin_navigation_click,
-    pattern="^(list_users|list_users_msg|toggleban_u_.*|show_stats|ban_user_list|ban_u_.*|admin_top20)$"
+    pattern="^(list_users_msg|broadcast|ban_user_list|ban_u_.*|show_stats|admin_top20|admin_send_menu|admin_messages_menu|admin_tasks_menu|users_points)$"
 ))
 telegram_app.add_handler(CallbackQueryHandler(
     user_navigation_click,
-    pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|user_confirm_verify|user_task_menu|user_task_open|user_task_claim)$"
+    pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|user_confirm_verify|user_task_menu|user_task_open|user_task_claim|user_first_verify)$"
 ))
 
 telegram_app.add_handler(welcome_conv)
-telegram_app.add_handler(after_photo_conv)
 telegram_app.add_handler(broadcast_conv)
 telegram_app.add_handler(direct_msg_conv)
 telegram_app.add_handler(ban_user_conv)
 telegram_app.add_handler(verify_link_conv)
-telegram_app.add_handler(verify_fail_msg_conv)
-telegram_app.add_handler(activation_msg_conv)
-telegram_app.add_handler(first_entry_msg_conv)
 telegram_app.add_handler(first_sub_msg_conv)
-telegram_app.add_handler(tasks_button_name_conv)
 telegram_app.add_handler(task_mission_conv)
+telegram_app.add_handler(task_complete_msg_conv)
 
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
@@ -1124,8 +1002,6 @@ async def telegram_webhook(request: Request):
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
 
-
-# ==================== تشغيل البوت على Railway ====================
 
 @app.on_event("startup")
 async def startup_event():
