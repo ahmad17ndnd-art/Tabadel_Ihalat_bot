@@ -241,6 +241,7 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 إحصائيات البوت", callback_data="user_stats")],
         [InlineKeyboardButton("🏆 أفضل 20 مستخدم", callback_data="user_top")],
         [InlineKeyboardButton("🎁 الهدية اليومية", callback_data="user_daily_gift")],
+        [InlineKeyboardButton("📝 المهام", callback_data="user_tasks_menu")],
     ]
 
     # أزرار إضافية للأدمن فقط
@@ -350,7 +351,7 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # منيو المهام
+    # منيو المهام (للأدمن)
     if data == "admin_tasks_menu":
         keyboard = [
             [InlineKeyboardButton("✏️ تعديل نص المهمة", callback_data="task_edit_text")],
@@ -358,7 +359,7 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("💰 تعديل نقاط المهمة", callback_data="task_edit_points")],
             [InlineKeyboardButton("🎉 تعديل رسالة إتمام المهمة", callback_data="task_edit_done")],
         ]
-        await query.message.reply_text("📝 إدارة المهام:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.reply_text("📝 إدارة المهام (أدمن):", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     # منيو إرسال الهدايا
@@ -369,7 +370,7 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # قائمة المستخدمين للحظر بالزر
+    # قائمة المستخدمين للحظر بالزر + الهدايا
     if data == "ban_user_list":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -1023,6 +1024,25 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    if data == "user_tasks_menu":
+        settings = get_settings()
+        keyboard = [
+            [InlineKeyboardButton("🔗 فتح رابط المهمة", url=settings["task_link"])],
+            [InlineKeyboardButton("✔ أنجزت المهمة", callback_data="user_task_done")]
+        ]
+        await query.message.reply_text(
+            f"📝 المهمة الحالية:\n\n{settings['task_text']}\n\n"
+            f"💰 نقاط المهمة: {settings['task_points']}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if data == "user_task_done":
+        settings = get_settings()
+        add_points(user.id, settings["task_points"])
+        await query.message.reply_text(settings["task_done_msg"])
+        return
+
 
 # ==================== ConversationHandlers ====================
 
@@ -1124,7 +1144,7 @@ telegram_app.add_handler(
 telegram_app.add_handler(
     CallbackQueryHandler(
         user_navigation_click,
-        pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|user_confirm_verify|user_daily_gift)$"
+        pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|user_confirm_verify|user_daily_gift|user_tasks_menu|user_task_done)$"
     )
 )
 
