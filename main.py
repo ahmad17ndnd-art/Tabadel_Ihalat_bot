@@ -1392,4 +1392,4 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     await telegram_app.stop()
-    await telegram_app.shutdown(
+    await telegram_app.shutdown()
