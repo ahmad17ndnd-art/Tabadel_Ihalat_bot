@@ -23,14 +23,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==================== الإعدادات الرئيسية ====================
-BOT_TOKEN = "8397243265:AAE4YmfFO--0bjx_ATwWirFu_djos9iuoOI"
-ADMIN_ID = 1922499737
+# تنويه: التوكن ما عاد مكتوب بالكود، لازم تحطه كمتغير بيئة BOT_TOKEN
+# على Railway (Variables) قبل ما تشغل البوت.
+BOT_TOKEN = os.environ.get("8397243265:AAF6JNUAL0xUynyc-3QalA3KA5fAnyND90M")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "1922499737"))
+
+if not BOT_TOKEN:
+    raise RuntimeError("لازم تضيف متغير البيئة BOT_TOKEN قبل تشغيل البوت")
 
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 app = FastAPI()
 
 # ==================== قاعدة البيانات ====================
-DB_NAME = "bot_data.db"
+# مهم: هاد المسار لازم يكون داخل Volume دائم على Railway (مش مجلد المشروع العادي)
+# وإلا رح تنمسح قاعدة البيانات (وكل المستخدمين) مع كل ديبلوي جديد.
+# مثال: اعمل Volume وربطه على /data ثم حط DB_PATH=/data/bot_data.db بالمتغيرات
+DB_NAME = os.environ.get("DB_PATH", "bot_data.db")
 
 
 def init_db():
@@ -256,7 +264,19 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("🎁 إرسال هدية نقاط", callback_data="admin_send_gift_menu")])
         keyboard.append([InlineKeyboardButton("🚫 إدارة الحظر", callback_data="ban_user_list")])
 
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    target = update.effective_message or update.callback_query.message
+    await target.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def send_subscription_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """رسالة واحدة فيها زرين: فتح الرابط (مباشر) + التحقق من الاشتراك."""
+    settings = get_settings()
+    keyboard = [
+        [InlineKeyboardButton("🔗 فتح الرابط", url=settings["verify_link"])],
+        [InlineKeyboardButton("✅ التحقق من الاشتراك", callback_data="user_confirm_verify")],
+    ]
+    target = update.effective_message or update.callback_query.message
+    await target.reply_text(settings["first_sub_msg"], reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ==================== /start مع إحالات ====================
@@ -285,15 +305,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_referral(ref_by)
         add_points(ref_by, 150)
 
-    settings = get_settings()
-
-    # الرسالة الإجباريّة الأولى
-    await update.message.reply_text(settings["first_sub_msg"])
-
-    # الرسالة الترحيبية الفخمة
-    await update.message.reply_text(settings["welcome_msg"])
-
-    await send_main_menu(update, context)
+    # إذا كان مفعّل من قبل منروح مباشرة عالقائمة الرئيسية
+    _, _, verified = get_user_info(user.id)
+    if verified:
+        await send_main_menu(update, context)
+    else:
+        await send_subscription_gate(update, context)
 
     # إشعار للأدمن
     try:
@@ -339,7 +356,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("✏️ تعديل الرسالة الترحيبية", callback_data="change_welcome")],
             [InlineKeyboardButton("📸 تعديل رسالة بعد الصورة", callback_data="change_after_photo")],
             [InlineKeyboardButton("🔗 تعديل الرابط الإجباري", callback_data="change_verify_link")],
-            [InlineKeyboardButton("⚠️ تعديل رسالة فشل التفعيل", callback_data="change_verify_fail_msg")],
             [InlineKeyboardButton("📩 تعديل الرسالة الإجباريّة", callback_data="change_first_sub_msg")],
             [InlineKeyboardButton("🎁 تعديل نقاط الهدية اليومية", callback_data="change_daily_gift_points")],
         ]
@@ -400,13 +416,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         conn.close()
         await query.message.reply_text("🚫 تم حظر المستخدم بنجاح")
         return
-
-    # إرسال هدية نقاط لمستخدم
-    if data.startswith("gift_u_"):
-        uid = int(data.replace("gift_u_", ""))
-        context.user_data["gift_target"] = uid
-        await query.message.reply_text("🎁 أرسل الآن عدد النقاط التي تريد منحها لهذا المستخدم كهدية:")
-        return WAITING_GIFT_POINTS
 
     # عرض كل المستخدمين مرتبين حسب النقاط
     if data == "list_users":
@@ -795,6 +804,15 @@ async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_T
 
 # ==================== هدية نقاط من الأدمن ====================
 
+async def ask_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = int(query.data.replace("gift_u_", ""))
+    context.user_data["gift_target"] = uid
+    await query.message.reply_text("🎁 أرسل الآن عدد النقاط التي تريد منحها لهذا المستخدم كهدية:")
+    return WAITING_GIFT_POINTS
+
+
 async def process_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = context.user_data.get("gift_target")
     if not target:
@@ -949,45 +967,35 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data == "user_activate_menu":
         status = "✅ مفعّل" if verified else "❌ غير مفعّل"
-        txt = (
-            f"🔐 حالة حسابك الحالية: {status}\n\n"
-            f"لتفعيل الحساب (نظام تفعيل وهمي فخم):\n"
-            f"1️⃣ اضغط زر \"🔗 فتح رابط التفعيل\".\n"
-            f"2️⃣ افتح الرابط واشترك هناك (اختياري).\n"
-            f"3️⃣ ارجع للبوت واضغط زر \"✅ أنا فعلت الحساب\".\n\n"
-            f"عند الضغط على زر التفعيل، سيتم منحك نقاط وتفعيل حسابك داخل هذا البوت."
-        )
-        keyboard = [
-            [InlineKeyboardButton("🔗 فتح رابط التفعيل", callback_data="user_open_verify_link")],
-            [InlineKeyboardButton("✅ أنا فعلت الحساب", callback_data="user_confirm_verify")],
-        ]
-        await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if data == "user_open_verify_link":
-        set_clicked_verify_link(user.id)
-        await query.message.reply_text(
-            f"🔗 افتح هذا الرابط (اختياري للتفعيل الوهمي):\n{settings['verify_link']}\n\n"
-            f"بعدها ارجع للبوت واضغط زر \"✅ أنا فعلت الحساب\"."
-        )
+        txt = f"🔐 حالة حسابك الحالية: {status}"
+        if verified:
+            await query.message.reply_text(txt)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("🔗 فتح الرابط", url=settings["verify_link"])],
+                [InlineKeyboardButton("✅ التحقق من الاشتراك", callback_data="user_confirm_verify")],
+            ]
+            await query.message.reply_text(
+                txt + "\n\n" + settings["first_sub_msg"],
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         return
 
     if data == "user_confirm_verify":
-        if verified:
+        first_time = not verified
+        if not verified:
+            set_verified(user.id)
+            add_points(user.id, 200)
+
+        if first_time:
+            await query.message.reply_text(settings["welcome_msg"])
+            await query.message.reply_text(
+                "🔐 تم تفعيل حسابك بنجاح ✅\n"
+                "💰 حصلت على 200 نقطة كمكافأة على التفعيل!"
+            )
+            await send_main_menu(update, context)
+        else:
             await query.message.reply_text("🔐 حسابك مفعّل بالفعل ✅")
-            return
-
-        clicked = get_clicked_verify_link(user.id)
-        if not clicked:
-            await query.message.reply_text(settings["verify_fail_msg"])
-            return
-
-        set_verified(user.id)
-        add_points(user.id, 200)
-        await query.message.reply_text(
-            "🔐 تم تفعيل حسابك بنجاح ✅\n"
-            "💰 حصلت على 200 نقطة كمكافأة على التفعيل!"
-        )
         return
 
     if data == "user_daily_gift":
@@ -1121,7 +1129,7 @@ task_done_conv = ConversationHandler(
 )
 
 gift_points_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(lambda u, c: None, pattern="^gift_u_")],
+    entry_points=[CallbackQueryHandler(ask_gift_points, pattern="^gift_u_")],
     states={WAITING_GIFT_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_gift_points)]},
     fallbacks=[]
 )
@@ -1134,7 +1142,7 @@ telegram_app.add_handler(CommandHandler("admin", admin_panel))
 telegram_app.add_handler(
     CallbackQueryHandler(
         admin_navigation_click,
-        pattern="^(admin_messages_menu|admin_tasks_menu|admin_send_gift_menu|list_users|list_users_msg|toggleban_u_.*|show_stats|ban_user_list|ban_u_.*|admin_top20|gift_u_.*)$"
+        pattern="^(admin_messages_menu|admin_tasks_menu|admin_send_gift_menu|list_users|list_users_msg|toggleban_u_.*|show_stats|ban_user_list|ban_u_.*|admin_top20)$"
     )
 )
 telegram_app.add_handler(
@@ -1157,6 +1165,7 @@ telegram_app.add_handler(task_text_conv)
 telegram_app.add_handler(task_link_conv)
 telegram_app.add_handler(task_points_conv)
 telegram_app.add_handler(task_done_conv)
+telegram_app.add_handler(gift_points_conv)
 
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
