@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ==================== الإعدادات الرئيسية ====================
 # تنويه: التوكن ما عاد مكتوب بالكود، لازم تحطه كمتغير بيئة BOT_TOKEN
 # على Railway (Variables) قبل ما تشغل البوت.
-BOT_TOKEN = os.environ.get("8397243265:AAF6JNUAL0xUynyc-3QalA3KA5fAnyND90M")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "1922499737"))
 
 if not BOT_TOKEN:
