@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    KeyboardButtonRequestUser, KeyboardButtonRequestChat
+    KeyboardButtonRequestUsers, KeyboardButtonRequestChat
 )
 from telegram.ext import (
     ApplicationBuilder,
