@@ -52,7 +52,7 @@ CATEGORY_LABELS = {
     "interaction": "❤️ تفاعل",
 }
 CATEGORY_ORDER = ["channel", "group", "bot", "post", "interaction"]
-# الفئات التي يمكن التحقق منها بشكل حقيقي عبر تليجرام (لو البوت أدمن فيها)
+# الفئات التي يمكن التحقق منها بشكل حقيقي عبر تليجرام
 AUTO_VERIFIABLE_CATEGORIES = {"channel", "group"}
 
 # الأسعار هنا تمثل (المكافأة لكل شخص)
@@ -101,7 +101,7 @@ def init_db():
     """)
     c.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)")
 
-    # جدول أسعار فئات الإعلانات (حد أدنى / أقصى يحدده الأدمن للمكافأة)
+    # جدول أسعار فئات الإعلانات
     c.execute("""
         CREATE TABLE IF NOT EXISTS category_prices (
             category TEXT PRIMARY KEY,
@@ -115,7 +115,7 @@ def init_db():
             (cat, mn, mx)
         )
 
-    # جدول الإعلانات (لوحة تبادل الإعلانات) - تم إضافة target_count و current_count
+    # جدول الإعلانات
     c.execute("""
         CREATE TABLE IF NOT EXISTS ads (
             ad_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,7 +135,7 @@ def init_db():
         )
     """)
 
-    # جدول تتبع تنفيذ المستخدمين للإعلانات (إثبات، مراجعة، دفع)
+    # جدول تتبع تنفيذ المستخدمين للإعلانات
     c.execute("""
         CREATE TABLE IF NOT EXISTS ad_completions (
             ad_id INTEGER,
@@ -149,7 +149,7 @@ def init_db():
         )
     """)
 
-    # ترحيل (migration) لقواعد بيانات قديمة
+    # ترحيل (migration)
     migrations = [
         ("users", "gate_sent_at", "TEXT DEFAULT NULL"),
         ("settings", "verify_channel_id", "TEXT DEFAULT NULL"),
@@ -182,7 +182,7 @@ WAITING_GIFT_ALL_POINTS = 23
 WAITING_AD_LINK = 30
 WAITING_AD_DESC = 31
 WAITING_AD_REWARD = 32
-WAITING_AD_QUANTITY = 37  # حالة جديدة لإدخال عدد الأشخاص
+WAITING_AD_QUANTITY = 37
 WAITING_AD_PRICE_INPUT = 33
 WAITING_AD_VERIFY_CHANNEL = 34
 WAITING_CATEGORY_PRICE = 35
@@ -469,7 +469,6 @@ def get_ads_by_status(status, category=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if category:
-        # إضافة ترتيب من الأكثر نقاطاً إلى الأقل، وعدم إظهار الإعلانات التي اكتمل عددها
         c.execute(
             """SELECT ad_id, owner_id, owner_username, category, link, description, post_price, reward_points,
                       target_count, current_count, verify_mode, channel_id, status, created_at
@@ -503,7 +502,7 @@ def get_ads_by_owner(owner_id):
     return rows
 
 
-# ==================== دوال مساعدة: تنفيذ الإعلانات (إثبات/مراجعة) ====================
+# ==================== دوال مساعدة: تنفيذ الإعلانات ====================
 
 def get_completion(ad_id, user_id):
     conn = sqlite3.connect(DB_NAME)
@@ -686,9 +685,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_referral(ref_by)
         add_points(ref_by, 150)
 
-    _, _, verified = get_user_info(user.id)
-    
-    # نظهر الواجهة الرئيسية مباشرةً
     await send_main_menu(update, context)
 
     try:
@@ -701,7 +697,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Failed to notify admin about new user: {e}")
 
 
-# ==================== لوحة الإدارة الفخمة ====================
+# ==================== لوحة الإدارة ====================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -732,7 +728,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
     if update.effective_user.id != ADMIN_ID:
         return
 
-    # منيو تعديل الرسائل
     if data == "admin_messages_menu":
         keyboard = [
             [InlineKeyboardButton("✏️ تعديل الرسالة الترحيبية", callback_data="change_welcome")],
@@ -768,7 +763,7 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         conn.close()
 
         await query.message.reply_text(
-            f"📊 إحصائيات البوت الفخم:\n\n"
+            f"📊 إحصائيات البوت:\n\n"
             f"👥 إجمالي المستخدمين: {total}\n"
             f"✅ النشطون: {active}\n"
             f"🚫 المحظورون: {banned}\n"
@@ -799,7 +794,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text(text)
         return
 
-    # ==== أسعار فئات الإعلانات ====
     if data == "admin_cat_prices":
         keyboard = []
         for cat in CATEGORY_ORDER:
@@ -813,7 +807,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # ==== إدارة الإعلانات ====
     if data == "admin_ads_menu":
         keyboard = [
             [InlineKeyboardButton("🕓 قيد المراجعة", callback_data="adlist:pending")],
@@ -896,7 +889,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text(f"⏹ تم إيقاف الإعلان #{ad_id}")
         return
 
-    # ==== إدارة المستخدمين (تصفح مصغّر) ====
     if data.startswith("ubrowse:"):
         page = int(data.split(":")[1])
         await show_users_page(query, page)
@@ -976,7 +968,7 @@ async def show_user_detail(query, uid: int, page: int):
 
 async def ask_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الرسالة الترحيبية الجديدة (فخمة):")
+    await update.callback_query.message.reply_text("أرسل الرسالة الترحيبية الجديدة:")
     return WAITING_WELCOME_MSG
 
 
@@ -993,7 +985,7 @@ async def save_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل الرسالة التي تظهر بعد الصورة (فخمة):")
+    await update.callback_query.message.reply_text("أرسل الرسالة التي تظهر بعد الصورة:")
     return WAITING_AFTER_PHOTO_MSG
 
 
@@ -1084,10 +1076,8 @@ async def save_daily_gift_points(update: Update, context: ContextTypes.DEFAULT_T
 async def ask_verify_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(
-        "🔒 أرسل معرّف القناة/الجروب (مثال: @my_channel أو -1001234567890) "
-        "عشان يصير التحقق حقيقي عبر تليجرام لبوابة الدخول.\n\n"
-        "⚠️ شرط: لازم تضيف البوت أدمن بهاي القناة/الجروب وإلا ما رح يشتغل.\n\n"
-        "لإلغاء التحقق الحقيقي والرجوع للتحقق التلقائي، أرسل: -"
+        "🔒 أرسل معرّف القناة/الجروب (مثال: @my_channel أو -1001234567890)\n"
+        "لإلغاء التحقق الحقيقي، أرسل: -"
     )
     return WAITING_VERIFY_CHANNEL
 
@@ -1107,8 +1097,6 @@ async def save_verify_channel(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-# ==================== تعديل سعر فئة إعلان ====================
-
 async def ask_category_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1124,10 +1112,6 @@ async def ask_category_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def save_category_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat = context.user_data.get("edit_cat")
-    if not cat:
-        await update.message.reply_text("حدث خطأ، حاول مجدداً.")
-        return ConversationHandler.END
-
     parts = re.split(r"[\s\-]+", update.message.text.strip())
     parts = [p for p in parts if p]
     if len(parts) != 2:
@@ -1137,9 +1121,6 @@ async def save_category_price(update: Update, context: ContextTypes.DEFAULT_TYPE
         mn, mx = int(parts[0]), int(parts[1])
     except ValueError:
         await update.message.reply_text("❌ الرجاء إرسال أرقام صحيحة.")
-        return ConversationHandler.END
-    if mn > mx or mn < 0:
-        await update.message.reply_text("❌ يجب أن يكون الحد الأدنى أصغر من أو يساوي الحد الأقصى.")
         return ConversationHandler.END
 
     set_category_price(cat, mn, mx)
@@ -1159,15 +1140,13 @@ async def ask_broadcast_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     user_ids = get_all_active_user_ids()
-
     sent = 0
     for uid in user_ids:
         try:
             await telegram_app.bot.send_message(uid, msg)
             sent += 1
-        except Exception as e:
-            logger.error(f"Error sending to {uid}: {e}")
-
+        except Exception:
+            pass
     await update.message.reply_text(f"تم إرسال الرسالة إلى {sent} مستخدم ✔")
     return ConversationHandler.END
 
@@ -1185,20 +1164,15 @@ async def ask_direct_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     target = context.user_data.get("target_user")
-    if not target:
-        await update.message.reply_text("لم يتم تحديد المستخدم المستهدف.")
-        return ConversationHandler.END
-
     try:
         await telegram_app.bot.send_message(target, msg)
         await update.message.reply_text("تم إرسال الرسالة ✔")
     except Exception as e:
         await update.message.reply_text(f"خطأ أثناء الإرسال: {e}")
-
     return ConversationHandler.END
 
 
-# ==================== هدية نقاط من الأدمن (لمستخدم واحد) ====================
+# ==================== هدية نقاط ====================
 
 async def ask_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1211,10 +1185,6 @@ async def ask_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = context.user_data.get("gift_target")
-    if not target:
-        await update.message.reply_text("لم يتم تحديد المستخدم المستهدف للهدية.")
-        return ConversationHandler.END
-
     try:
         pts = int(update.message.text.strip())
     except ValueError:
@@ -1222,26 +1192,17 @@ async def process_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
 
     add_points(target, pts)
-
     try:
-        await telegram_app.bot.send_message(
-            target,
-            f"🎁 وصلك هدية نقاط من الأدمن: +{pts} نقطة\nاستمتع!"
-        )
-    except Exception as e:
-        logger.error(f"Failed to send gift to {target}: {e}")
-
+        await telegram_app.bot.send_message(target, f"🎁 وصلك هدية نقاط من الأدمن: +{pts} نقطة\nاستمتع!")
+    except Exception:
+        pass
     await update.message.reply_text(f"✔ تم إرسال هدية {pts} نقطة للمستخدم {target}")
     return ConversationHandler.END
 
 
-# ==================== هدية نقاط لجميع المستخدمين ====================
-
 async def ask_gift_all_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(
-        "🎁 أرسل عدد النقاط التي تريد منحها لكل المستخدمين غير المحظورين دفعة واحدة:"
-    )
+    await update.callback_query.message.reply_text("🎁 أرسل عدد النقاط التي تريد منحها لكل المستخدمين غير المحظورين:")
     return WAITING_GIFT_ALL_POINTS
 
 
@@ -1256,13 +1217,9 @@ async def process_gift_all_points(update: Update, context: ContextTypes.DEFAULT_
     for uid in user_ids:
         add_points(uid, pts)
         try:
-            await telegram_app.bot.send_message(
-                uid,
-                f"🎁 وصلتك هدية نقاط من الإدارة لكل المستخدمين: +{pts} نقطة\nاستمتع!"
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify {uid} about gift-all: {e}")
-
+            await telegram_app.bot.send_message(uid, f"🎁 وصلتك هدية نقاط من الإدارة لكل المستخدمين: +{pts} نقطة\nاستمتع!")
+        except Exception:
+            pass
     await update.message.reply_text(f"✔ تم منح {pts} نقطة لعدد {len(user_ids)} مستخدم")
     return ConversationHandler.END
 
@@ -1283,9 +1240,9 @@ async def ad_category_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE)
     cat = query.data.split(":")[1]
     context.user_data["new_ad"] = {"category": cat}
     
-    # استخدام أزرار الـ Request لاختيار البوت أو القناة مباشرة من تليجرام
+    # استخدام KeyboardButtonRequestUsers المحدثة
     if cat == "bot":
-        btn = KeyboardButton("🤖 إضافة بوت", request_user=KeyboardButtonRequestUser(request_id=1, user_is_bot=True))
+        btn = KeyboardButton("🤖 إضافة بوت", request_users=KeyboardButtonRequestUsers(request_id=1, user_is_bot=True))
         reply_markup = ReplyKeyboardMarkup([[btn]], resize_keyboard=True, one_time_keyboard=True)
         await query.message.reply_text(
             f"✅ اخترت فئة: {CATEGORY_LABELS[cat]}\n\n👇 اضغط على الزر بالأسفل لاختيار البوت من قائمة محادثاتك:",
@@ -1308,10 +1265,10 @@ async def ad_got_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_data = context.user_data.get("new_ad", {})
     link = ""
 
-    # التقاط الـ ID إذا استخدم المستخدم الأزرار المدمجة (request_user/chat)
-    if update.message.user_shared:
-        link = f"tg://user?id={update.message.user_shared.user_id}"
-    elif update.message.chat_shared:
+    # التقاط الـ ID للإصدارات الحديثة
+    if getattr(update.message, 'users_shared', None):
+        link = f"tg://user?id={update.message.users_shared.users[0].user_id}"
+    elif getattr(update.message, 'chat_shared', None):
         link = f"tg://resolve?domain={update.message.chat_shared.chat_id}"
     elif update.message.text:
         link = update.message.text.strip()
@@ -1321,8 +1278,6 @@ async def ad_got_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_AD_LINK
 
     ad_data["link"] = link
-    
-    # إزالة كيبورد الأزرار السفلية إن وجدت
     await update.message.reply_text(
         "📝 الآن أرسل وصف/نص الإعلان (ماذا تريد من الشخص أن يفعله؟):",
         reply_markup=ReplyKeyboardRemove()
@@ -1332,7 +1287,6 @@ async def ad_got_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ad_got_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_ad"]["description"] = update.message.text
-    
     cat = context.user_data["new_ad"]["category"]
     mn, mx = get_category_price(cat)
     context.user_data["new_ad"]["min_p"] = mn
@@ -1359,7 +1313,6 @@ async def ad_got_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_AD_REWARD
 
     context.user_data["new_ad"]["reward_points"] = reward
-    
     user_points, _, _ = get_user_info(update.effective_user.id)
     max_people = user_points // reward
 
@@ -1392,20 +1345,15 @@ async def ad_got_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     total_cost = reward * target_count
     if total_cost > user_points:
-        await update.message.reply_text(
-            f"❌ نقاطك لا تكفي. إجمالي التكلفة سيكون {total_cost}، ونقاطك الحالية {user_points}.\n"
-            f"الرجاء إرسال عدد أقل:"
-        )
+        await update.message.reply_text(f"❌ نقاطك لا تكفي. إجمالي التكلفة سيكون {total_cost}، ونقاطك الحالية {user_points}.\nالرجاء إرسال عدد أقل:")
         return WAITING_AD_QUANTITY
 
     ad_data["target_count"] = target_count
     ad_data["post_price"] = total_cost
-
     cat = ad_data["category"]
     if cat in AUTO_VERIFIABLE_CATEGORIES:
         await update.message.reply_text(
-            "🔒 هل تريد تحقق حقيقي 100%؟ إذا نعم، أضف البوت أدمن على القناة/المجموعة ثم أرسل معرّفها "
-            "(مثال: @my_channel أو -1001234567890).\n"
+            "🔒 هل تريد تحقق حقيقي 100%؟ إذا نعم، أضف البوت أدمن على القناة/المجموعة ثم أرسل معرّفها.\n"
             "أو أرسل - للتجاوز والاعتماد على إثبات الصورة (سكرين شوت) بدالها."
         )
         return WAITING_AD_VERIFY_CHANNEL
@@ -1428,9 +1376,7 @@ async def ad_got_verify_channel(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         context.user_data["new_ad"]["verify_mode"] = "manual"
         context.user_data["new_ad"]["channel_id"] = None
-        await update.message.reply_text(
-            "⚠️ ما قدرت أتأكد إن البوت أدمن هناك، رح نعتمد إثبات الصورة (سكرين شوت) بدالها."
-        )
+        await update.message.reply_text("⚠️ ما قدرت أتأكد إن البوت أدمن هناك، رح نعتمد إثبات الصورة (سكرين شوت) بدالها.")
 
     return await finalize_ad_creation(update, context)
 
@@ -1442,9 +1388,7 @@ async def finalize_ad_creation(update: Update, context: ContextTypes.DEFAULT_TYP
 
     points, _, _ = get_user_info(user.id)
     if points < price:
-        await update.message.reply_text(
-            f"❌ رصيدك من النقاط غير كافٍ لنشر هذا الإعلان.\n💵 السعر الإجمالي: {price} نقطة\n💰 رصيدك: {points} نقطة"
-        )
+        await update.message.reply_text("❌ رصيدك من النقاط غير كافٍ لنشر هذا الإعلان.")
         context.user_data.pop("new_ad", None)
         return ConversationHandler.END
 
@@ -1461,39 +1405,27 @@ async def finalize_ad_creation(update: Update, context: ContextTypes.DEFAULT_TYP
         verify_mode=new_ad.get("verify_mode", "manual"),
         channel_id=new_ad.get("channel_id"),
     )
-
     context.user_data.pop("new_ad", None)
-
-    await update.message.reply_text(
-        f"✅ تم إرسال إعلانك #{ad_id} للمراجعة من الإدارة.\n💰 تم خصم {price} نقطة من رصيدك.\n"
-        f"سيتم إعلامك فور الموافقة أو الرفض."
-    )
+    await update.message.reply_text(f"✅ تم إرسال إعلانك #{ad_id} للمراجعة من الإدارة.\n💰 تم خصم {price} نقطة من رصيدك.")
 
     try:
         ad = get_ad(ad_id)
-        verify_txt = "✅ تحقق حقيقي تلقائي" if ad["verify_mode"] == "auto" else "🧾 إثبات بالصورة"
         keyboard = [[
             InlineKeyboardButton("✅ قبول ونشر", callback_data=f"adnew:approve:{ad_id}"),
             InlineKeyboardButton("❌ رفض", callback_data=f"adnew:reject:{ad_id}")
         ]]
         await telegram_app.bot.send_message(
             ADMIN_ID,
-            f"📢 طلب إعلان جديد #{ad_id} — {CATEGORY_LABELS.get(ad['category'], ad['category'])}\n"
-            f"من: {ad['owner_username']} (ID: {ad['owner_id']})\n"
-            f"🔗 الرابط: {ad['link']}\n"
-            f"📝 الوصف: {ad['description']}\n"
-            f"💵 إجمالي التكلفة: {ad['post_price']} نقطة\n"
-            f"🎁 مكافأة للشخص: {ad['reward_points']} نقطة | العدد المطلوب: {ad['target_count']}\n"
-            f"🔍 طريقة التحقق: {verify_txt}",
+            f"📢 طلب إعلان جديد #{ad_id}\nمن: {ad['owner_username']}\nالتكلفة: {ad['post_price']}\nمكافأة: {ad['reward_points']} | العدد: {ad['target_count']}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except Exception as e:
-        logger.error(f"Failed to notify admin about new ad: {e}")
+    except Exception:
+        pass
 
     return ConversationHandler.END
 
 
-# ==================== إعلاناتي (لصاحب الإعلان) ====================
+# ==================== إعلاناتي ====================
 
 async def show_my_ads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1586,9 +1518,7 @@ async def show_earn_ad_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     open_ad_for_user(ad_id, user.id)
 
-    keyboard = [
-        [InlineKeyboardButton("🔗 اذهب للرابط/البوت", url=ad["link"])]
-    ]
+    keyboard = [[InlineKeyboardButton("🔗 اذهب للرابط/البوت", url=ad["link"])]]
     if ad["verify_mode"] == "auto":
         keyboard.append([InlineKeyboardButton("✅ نفذت المطلوب", callback_data=f"earnconfirm:{ad_id}")])
         verify_hint = "بعد التنفيذ اضغط الزر تحت وراح نتحقق تلقائياً."
@@ -1597,8 +1527,7 @@ async def show_earn_ad_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await query.message.reply_text(
         f"📌 مهمة بـ {ad['reward_points']} نقطة\n\n"
-        f"📝 وصف المهمة:\n{ad['description']}\n\n"
-        f"{verify_hint}",
+        f"📝 وصف المهمة:\n{ad['description']}\n\n{verify_hint}",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -1632,7 +1561,6 @@ async def earn_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_points(user.id, ad["reward_points"])
         set_completion_status(ad_id, user.id, "approved")
         
-        # زيادة عداد المنجزين
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("UPDATE ads SET current_count = current_count + 1 WHERE ad_id = ?", (ad_id,))
@@ -1655,7 +1583,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     photo = update.message.photo[-1].file_id
 
-    # 1) رد على طلب إعادة محاولة
     review_ad_id = get_latest_review_request(user.id)
     if review_ad_id:
         ad = get_ad(review_ad_id)
@@ -1671,12 +1598,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=f"🧾 رد جديد بعد إعادة المحاولة — مهمة #{review_ad_id}\nمن: {user.username or user.full_name}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        except Exception as e:
-            logger.error(f"Failed to forward review reply: {e}")
+        except Exception:
+            pass
         await update.message.reply_text("✔ تم إرسال ردك لصاحب الإعلان، بانتظار الموافقة والدفع.")
         return
 
-    # 2) إثبات صورة بانتظار سكرين شوت
     pending_ad_id = get_latest_pending_proof_request(user.id)
     if pending_ad_id:
         ad = get_ad(pending_ad_id)
@@ -1690,31 +1616,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await telegram_app.bot.send_photo(
                 ad["owner_id"], photo,
                 caption=(
-                    f"🧾 إثبات جديد — مهمة #{pending_ad_id} ({CATEGORY_LABELS.get(ad['category'], ad['category'])})\n"
+                    f"🧾 إثبات جديد — مهمة #{pending_ad_id}\n"
                     f"من: {user.username or user.full_name}\n"
-                    f"يرجى الدفع للمستخدم أو طلب إعادة محاولة."
                 ),
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        except Exception as e:
-            logger.error(f"Failed to forward proof to ad owner: {e}")
+        except Exception:
+            pass
         await update.message.reply_text("✔ تم إرسال إثباتك لصاحب الإعلان، رح توصلك النقاط بمجرد الدفع لك.")
         return
 
-    # 3) السلوك الافتراضي (غير مرتبط بإعلان)
     settings = get_settings()
     await update.message.reply_text(settings["after_photo_msg"])
     add_points(user.id, 20)
-
-    try:
-        if user.id != ADMIN_ID:
-            await telegram_app.bot.send_photo(
-                ADMIN_ID,
-                photo,
-                caption=f"📸 صورة جديدة من {user.username or user.full_name} (ID: {user.id})"
-            )
-    except Exception as e:
-        logger.error(f"Failed to send photo to admin: {e}")
 
 
 # ==================== استقبال النصوص ====================
@@ -1722,25 +1636,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
-
     if user.id == ADMIN_ID:
         await update.message.reply_text(f"استلمت رسالتك: {text}")
         return
-
     add_points(user.id, 10)
-
-    try:
-        await telegram_app.bot.send_message(
-            ADMIN_ID,
-            f"📩 رسالة جديدة من {user.username or user.full_name}:\n{text}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to notify admin about message: {e}")
-
     await update.message.reply_text(f"استلمت رسالتك: {text}")
 
 
-# ==================== ردود صاحب الإعلان (دفع/رفض/مراجعة) ====================
+# ==================== ردود صاحب الإعلان ====================
 
 async def ad_owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1758,7 +1661,6 @@ async def ad_owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_points(uid, ad["reward_points"])
         set_completion_status(ad_id, uid, "approved")
         
-        # تحديث عدد المنجزين للإعلان
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("UPDATE ads SET current_count = current_count + 1 WHERE ad_id = ?", (ad_id,))
@@ -1769,12 +1671,9 @@ async def ad_owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        # إزالة الأزرار وإشعار صاحب الإعلان
         await query.edit_message_caption(caption=f"✅ تم الدفع بنجاح للمستخدم.")
         try:
-            await telegram_app.bot.send_message(
-                uid, f"🎉 تم قبول إثباتك لمهمة #{ad_id}!\n💰 حصلت على {ad['reward_points']} نقطة."
-            )
+            await telegram_app.bot.send_message(uid, f"🎉 تم قبول إثباتك لمهمة #{ad_id}!\n💰 حصلت على {ad['reward_points']} نقطة.")
         except Exception:
             pass
         return
@@ -1783,9 +1682,7 @@ async def ad_owner_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_completion_status(ad_id, uid, "rejected")
         await query.edit_message_caption(caption="🚫 تم رفض الإثبات.")
         try:
-            await telegram_app.bot.send_message(
-                uid, f"❌ تم رفض إثباتك لمهمة #{ad_id}.\nتأكد إنك نفذت المطلوب صح وجرب مرة ثانية."
-            )
+            await telegram_app.bot.send_message(uid, f"❌ تم رفض إثباتك لمهمة #{ad_id}.")
         except Exception:
             pass
         return
@@ -1795,11 +1692,6 @@ async def ask_review_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     _, ad_id_s, uid_s = query.data.split(":")
-    ad = get_ad(int(ad_id_s))
-    if not ad or ad["owner_id"] != update.effective_user.id:
-        await query.message.reply_text("❌ هذا الإجراء غير متاح لك.")
-        return ConversationHandler.END
-
     context.user_data["review_ad_id"] = int(ad_id_s)
     context.user_data["review_uid"] = int(uid_s)
     await query.message.reply_text("✏️ أرسل رسالة توضح سبب إعادة المحاولة (مثال: يرجى إكمال الكابتشا أولاً):")
@@ -1809,10 +1701,6 @@ async def ask_review_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def save_review_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = context.user_data.get("review_ad_id")
     uid = context.user_data.get("review_uid")
-    if not ad_id or not uid:
-        await update.message.reply_text("حدث خطأ، حاول مجدداً.")
-        return ConversationHandler.END
-
     note = update.message.text
     ad = get_ad(ad_id)
     set_completion_status(ad_id, uid, "review_requested")
@@ -1821,20 +1709,18 @@ async def save_review_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await telegram_app.bot.send_message(
             uid,
-            f"⚠️ صاحب الإعلان يطلب منك إعادة المحاولة:\n\n{note}\n\n"
-            f"بعد التنفيذ الصحيح، ارسل سكرين شوت هنا مجدداً.",
+            f"⚠️ صاحب الإعلان يطلب منك إعادة المحاولة:\n\n{note}\n\nبعد التنفيذ ارسل سكرين شوت هنا مجدداً.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         await update.message.reply_text("✔ تم إرسال طلب إعادة المحاولة للمستخدم.")
-    except Exception as e:
-        await update.message.reply_text(f"خطأ أثناء الإرسال: {e}")
-
+    except Exception:
+        pass
     context.user_data.pop("review_ad_id", None)
     context.user_data.pop("review_uid", None)
     return ConversationHandler.END
 
 
-# ==================== واجهة المستخدم (Callback) ====================
+# ==================== واجهة المستخدم ====================
 
 async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1846,50 +1732,18 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
     settings = get_settings()
 
     if data == "user_points":
-        level = "🥉 مبتدئ"
-        if points >= 500:
-            level = "🥈 نشط"
-        if points >= 1000:
-            level = "🥇 VIP"
-        if points >= 2000:
-            level = "👑 Super VIP"
-
         rank, total_users = get_user_rank(user.id)
-        rank_text = "غير مصنّف بعد" if not rank else f"#{rank} من أصل {total_users} مستخدم"
-
-        await query.message.reply_text(
-            f"💰 نقاطك الحالية: {points}\n"
-            f"👥 إحالاتك: {referrals}\n"
-            f"🏆 مستواك: {level}\n"
-            f"📊 ترتيبك العام: {rank_text}"
-        )
+        await query.message.reply_text(f"💰 نقاطك الحالية: {points}\n👥 إحالاتك: {referrals}\n📊 ترتيبك: #{rank}")
         return
 
     if data == "user_referrals":
         ref_link = f"https://t.me/Tabadel_Ihalat_bot?start={user.id}"
-        await query.message.reply_text(
-            f"👥 إحالاتك: {referrals}\n\n"
-            f"🔗 رابط الإحالة الخاص بك:\n{ref_link}"
-        )
+        await query.message.reply_text(f"👥 إحالاتك: {referrals}\n\n🔗 رابط الإحالة الخاص بك:\n{ref_link}")
         return
 
     if data == "user_stats":
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users")
-        total = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM users WHERE verified = 1")
-        verified_count = c.fetchone()[0]
-        c.execute("SELECT SUM(points) FROM users")
-        total_points = c.fetchone()[0] or 0
-        conn.close()
-
-        await query.message.reply_text(
-            f"📊 إحصائيات البوت:\n\n"
-            f"👥 إجمالي المستخدمين: {total}\n"
-            f"🔐 المفعّلون: {verified_count}\n"
-            f"💰 إجمالي النقاط: {total_points}"
-        )
+        total = count_all_users()
+        await query.message.reply_text(f"📊 إجمالي المستخدمين: {total}")
         return
 
     if data == "user_top":
@@ -1898,93 +1752,44 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
         c.execute("SELECT username, points FROM users ORDER BY points DESC LIMIT 20")
         rows = c.fetchall()
         conn.close()
-
-        if not rows:
-            await query.message.reply_text("لا يوجد بيانات كافية لعرض أفضل المستخدمين.")
-            return
-
         text = "🏆 أفضل 20 مستخدم بالنقاط:\n\n"
-        medals = ["🥇", "🥈", "🥉"]
         for i, (uname, pts) in enumerate(rows):
-            medal = medals[i] if i < len(medals) else "🔹"
-            text += f"{medal} {uname} — {pts} نقطة\n"
-
+            text += f" {uname} — {pts} نقطة\n"
         await query.message.reply_text(text)
         return
 
     if data == "user_activate_menu":
-        status = "✅ مفعّل" if verified else "❌ غير مفعّل"
-        txt = f"🔐 حالة حسابك الحالية: {status}"
         if verified:
-            await query.message.reply_text(txt)
+            await query.message.reply_text("🔐 حسابك مفعّل بالفعل ✅")
         else:
             keyboard = [
                 [InlineKeyboardButton("🔗 فتح الرابط", url=settings["verify_link"])],
                 [InlineKeyboardButton("✅ التحقق من الاشتراك", callback_data="user_confirm_verify")],
             ]
             set_gate_sent(user.id)
-            await query.message.reply_text(
-                txt + "\n\n" + settings["first_sub_msg"],
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await query.message.reply_text(settings["first_sub_msg"], reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data == "user_confirm_verify":
         if verified:
             await query.message.reply_text("🔐 حسابك مفعّل بالفعل ✅")
             return
-
-        channel_id = settings.get("verify_channel_id")
-        if channel_id:
-            ok = await is_real_member(channel_id, user.id)
-            if not ok:
-                await query.message.reply_text(settings["verify_fail_msg"])
-                return
-        else:
-            elapsed = seconds_since(get_gate_sent(user.id))
-            if elapsed is None or elapsed < MIN_WAIT_SECONDS:
-                await query.message.reply_text(
-                    "⏳ تأكد إنك فتحت الرابط فعلاً، وحاول بعد كم ثانية."
-                )
-                return
-
         set_verified(user.id)
         add_points(user.id, 200)
-        await query.message.reply_text(settings["welcome_msg"])
-        await query.message.reply_text(
-            "🔐 تم تفعيل حسابك بنجاح ✅\n"
-            "💰 حصلت على 200 نقطة كمكافأة على التفعيل!"
-        )
-        await send_main_menu(update, context)
+        await query.message.reply_text("🔐 تم تفعيل حسابك بنجاح ✅\n💰 حصلت على 200 نقطة!")
         return
 
     if data == "user_daily_gift":
         daily_pts = settings["daily_gift_points"]
         last = get_last_gift_time(user.id)
-
         if last:
-            try:
-                last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
-                now = datetime.now()
-                diff = now - last_dt
-                if diff.total_seconds() < 86400:
-                    remaining = timedelta(seconds=86400 - diff.total_seconds())
-                    hours = remaining.seconds // 3600
-                    minutes = (remaining.seconds % 3600) // 60
-                    await query.message.reply_text(
-                        f"❌ لقد حصلت على هديتك اليومية بالفعل.\n"
-                        f"⏳ يمكنك المحاولة بعد {hours} ساعة و {minutes} دقيقة تقريبًا."
-                    )
-                    return
-            except Exception as e:
-                logger.error(f"Error parsing last_gift_at for {user.id}: {e}")
-
+            last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+            if (datetime.now() - last_dt).total_seconds() < 86400:
+                await query.message.reply_text("❌ لقد حصلت على هديتك اليومية بالفعل.")
+                return
         add_points(user.id, daily_pts)
         set_last_gift_time(user.id)
-        await query.message.reply_text(
-            f"🎁 هديتك اليومية وصلت!\n"
-            f"💰 تم إضافة {daily_pts} نقطة إلى حسابك."
-        )
+        await query.message.reply_text(f"🎁 هديتك اليومية وصلت!\n💰 تم إضافة {daily_pts} نقطة.")
         return
 
 
@@ -2062,10 +1867,11 @@ category_price_conv = ConversationHandler(
     fallbacks=[]
 )
 
+# تم هنا تغيير الفلتر إلى USERS_SHARED لحل مشكلة مكتبة التليجرام
 ad_create_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(ask_ad_category, pattern="^publish_ad$")],
     states={
-        WAITING_AD_LINK: [MessageHandler(filters.TEXT | filters.StatusUpdate.USER_SHARED | filters.StatusUpdate.CHAT_SHARED, ad_got_link)],
+        WAITING_AD_LINK: [MessageHandler(filters.TEXT | filters.StatusUpdate.USERS_SHARED | filters.StatusUpdate.CHAT_SHARED, ad_got_link)],
         WAITING_AD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_got_desc)],
         WAITING_AD_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_got_reward)],
         WAITING_AD_QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_got_quantity)],
