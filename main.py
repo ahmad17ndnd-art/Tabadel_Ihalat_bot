@@ -1538,6 +1538,7 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("📝 لا يوجد مهام متاحة حالياً، تابعنا قريباً!")
             return
 
+        shown = 0
         for task_id, text, link, task_points, done_msg, channel_id, active in tasks:
             progress = get_task_progress(user.id, task_id)
             if progress and progress[1]:  # completed_at موجود
@@ -1553,6 +1554,10 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
                 f"💰 نقاط المهمة: {task_points}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            shown += 1
+
+        if shown == 0:
+            await query.message.reply_text("✅ لقد أنجزت جميع المهام المتاحة حالياً. تابعنا لمهام جديدة قريباً!")
         return
 
     if data.startswith("task_done_"):
