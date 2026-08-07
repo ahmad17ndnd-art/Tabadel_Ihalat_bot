@@ -23,8 +23,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==================== الإعدادات الرئيسية ====================
-# تنويه: التوكن ما عاد مكتوب بالكود، لازم تحطه كمتغير بيئة BOT_TOKEN
-# على Railway (Variables) قبل ما تشغل البوت.
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "1922499737"))
 
@@ -35,9 +33,6 @@ telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 app = FastAPI()
 
 # ==================== قاعدة البيانات ====================
-# مهم: هاد المسار لازم يكون داخل Volume دائم على Railway (مش مجلد المشروع العادي)
-# وإلا رح تنمسح قاعدة البيانات (وكل المستخدمين) مع كل ديبلوي جديد.
-# مثال: اعمل Volume وربطه على /data ثم حط DB_PATH=/data/bot_data.db بالمتغيرات
 DB_NAME = os.environ.get("DB_PATH", "bot_data.db")
 
 
@@ -45,7 +40,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # جدول المستخدمين (فخم + نقاط + إحالات + تفعيل وهمي + هدية يومية)
+    # جدول المستخدمين
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -58,12 +53,11 @@ def init_db():
             ref_by INTEGER DEFAULT NULL,
             clicked_verify_link INTEGER DEFAULT 0,
             last_gift_at TEXT DEFAULT NULL,
-            gate_sent_at TEXT DEFAULT NULL,
-            task_sent_at TEXT DEFAULT NULL
+            gate_sent_at TEXT DEFAULT NULL
         )
     """)
 
-    # جدول الإعدادات (رسائل + رابط تفعيل + رسالة فشل + رسالة إجبارية + مهام + هدية يومية)
+    # جدول الإعدادات العامة
     c.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY,
@@ -72,38 +66,68 @@ def init_db():
             verify_link TEXT DEFAULT 'https://t.me/ATF_AIRDROP_bot',
             verify_fail_msg TEXT DEFAULT '❌ لم يتم التفعيل.\nيرجى فتح رابط التفعيل أولاً ثم الضغط على زر "✅ أنا فعلت الحساب".',
             first_sub_msg TEXT DEFAULT 'عذراً عزيزي عليك الاشتراك بالبوت التالي',
-            task_text TEXT DEFAULT '📌 هذه هي المهمة الحالية، قم بتنفيذها لتحصل على نقاط.',
-            task_link TEXT DEFAULT 'https://t.me/example_task',
-            task_points INTEGER DEFAULT 100,
-            task_done_msg TEXT DEFAULT '🎉 تم إكمال المهمة بنجاح! تم إضافة النقاط إلى حسابك.',
             daily_gift_points INTEGER DEFAULT 50,
             verify_channel_id TEXT DEFAULT NULL,
-            task_channel_id TEXT DEFAULT NULL
+            ad_price INTEGER DEFAULT 100
+        )
+    """)
+    c.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)")
+
+    # جدول المهام (متعدد)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT,
+            link TEXT,
+            points INTEGER DEFAULT 0,
+            done_msg TEXT DEFAULT '🎉 تم إكمال المهمة بنجاح! تم إضافة النقاط إلى حسابك.',
+            channel_id TEXT DEFAULT NULL,
+            active INTEGER DEFAULT 1,
+            created_at TEXT
         )
     """)
 
-    c.execute("INSERT OR IGNORE INTO settings (id) VALUES (1)")
+    # جدول تتبع تقدّم المستخدم بكل مهمة (لمنع تكرار أخذ نفس المهمة)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS task_progress (
+            user_id INTEGER,
+            task_id INTEGER,
+            sent_at TEXT,
+            completed_at TEXT DEFAULT NULL,
+            PRIMARY KEY (user_id, task_id)
+        )
+    """)
 
-    # ترحيل (migration) لقواعد بيانات قديمة تم إنشاؤها قبل إضافة هالأعمدة
+    # جدول الإعلانات
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS ads (
+            ad_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            content TEXT,
+            price_paid INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT
+        )
+    """)
+
+    # ترحيل (migration) لقواعد بيانات قديمة
     migrations = [
         ("users", "gate_sent_at", "TEXT DEFAULT NULL"),
-        ("users", "task_sent_at", "TEXT DEFAULT NULL"),
         ("settings", "verify_channel_id", "TEXT DEFAULT NULL"),
-        ("settings", "task_channel_id", "TEXT DEFAULT NULL"),
+        ("settings", "ad_price", "INTEGER DEFAULT 100"),
     ]
     for table, column, col_def in migrations:
         try:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
         except sqlite3.OperationalError:
-            pass  # العمود موجود أصلاً
+            pass
 
     conn.commit()
     conn.close()
 
 
-# الحد الأدنى (بالثواني) قبل قبول ضغطة "التحقق" عندما ما فينا نتأكد بشكل حقيقي
 MIN_WAIT_SECONDS = 8
-
 
 # ==================== حالات المحادثة ====================
 WAITING_WELCOME_MSG = 1
@@ -114,16 +138,21 @@ WAITING_BAN_NAME = 5
 WAITING_VERIFY_LINK = 6
 WAITING_VERIFY_FAIL_MSG = 7
 WAITING_FIRST_SUB_MSG = 8
-WAITING_TASK_TEXT = 9
-WAITING_TASK_LINK = 10
-WAITING_TASK_POINTS = 11
-WAITING_TASK_DONE_MSG = 12
 WAITING_GIFT_POINTS = 13
 WAITING_DAILY_GIFT_POINTS = 14
 WAITING_VERIFY_CHANNEL = 15
-WAITING_TASK_CHANNEL = 16
 
-# ==================== دوال مساعدة ====================
+WAITING_TASK_ADD_TEXT = 17
+WAITING_TASK_ADD_LINK = 18
+WAITING_TASK_ADD_POINTS = 19
+WAITING_TASK_ADD_DONE = 20
+WAITING_TASK_ADD_CHANNEL = 21
+WAITING_TASK_EDIT_FIELD = 22
+WAITING_GIFT_ALL_POINTS = 23
+WAITING_AD_PRICE = 24
+WAITING_AD_CONTENT = 25
+
+# ==================== دوال مساعدة عامة ====================
 
 def get_settings():
     conn = sqlite3.connect(DB_NAME)
@@ -131,8 +160,7 @@ def get_settings():
     c.execute(
         """
         SELECT welcome_msg, after_photo_msg, verify_link, verify_fail_msg,
-               first_sub_msg, task_text, task_link, task_points,
-               task_done_msg, daily_gift_points, verify_channel_id, task_channel_id
+               first_sub_msg, daily_gift_points, verify_channel_id, ad_price
         FROM settings WHERE id = 1
         """
     )
@@ -144,13 +172,9 @@ def get_settings():
         "verify_link": row[2],
         "verify_fail_msg": row[3],
         "first_sub_msg": row[4],
-        "task_text": row[5],
-        "task_link": row[6],
-        "task_points": row[7],
-        "task_done_msg": row[8],
-        "daily_gift_points": row[9],
-        "verify_channel_id": row[10],
-        "task_channel_id": row[11],
+        "daily_gift_points": row[5],
+        "verify_channel_id": row[6],
+        "ad_price": row[7],
     }
 
 
@@ -172,26 +196,7 @@ def get_gate_sent(user_id: int):
     return row[0] if row else None
 
 
-def set_task_sent(user_id: int):
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET task_sent_at = ? WHERE user_id = ?", (now_str, user_id))
-    conn.commit()
-    conn.close()
-
-
-def get_task_sent(user_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT task_sent_at FROM users WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-
 def seconds_since(timestamp_str):
-    """كم ثانية مرّت من وقت مخزّن بالصيغة %Y-%m-%d %H:%M:%S"""
     if not timestamp_str:
         return None
     try:
@@ -202,7 +207,6 @@ def seconds_since(timestamp_str):
 
 
 async def is_real_member(channel_id: str, user_id: int) -> bool:
-    """تحقق حقيقي عبر Telegram API - يتطلب إضافة البوت كأدمن بالقناة/الجروب."""
     try:
         member = await telegram_app.bot.get_chat_member(channel_id, user_id)
         return member.status in ("member", "administrator", "creator")
@@ -230,6 +234,14 @@ def add_points(user_id: int, amount: int):
     conn.close()
 
 
+def deduct_points(user_id: int, amount: int):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE users SET points = points - ? WHERE user_id = ?", (amount, user_id))
+    conn.commit()
+    conn.close()
+
+
 def add_referral(ref_by: int):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -244,23 +256,6 @@ def set_verified(user_id: int):
     c.execute("UPDATE users SET verified = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-
-
-def set_clicked_verify_link(user_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE users SET clicked_verify_link = 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
-
-
-def get_clicked_verify_link(user_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT clicked_verify_link FROM users WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
 
 
 def get_user_rank(user_id: int):
@@ -292,6 +287,144 @@ def set_last_gift_time(user_id: int):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("UPDATE users SET last_gift_at = ? WHERE user_id = ?", (now_str, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_all_active_user_ids():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE banned = 0")
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+# ==================== دوال مساعدة: المهام ====================
+
+def add_task(text, link, points, done_msg, channel_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO tasks (text, link, points, done_msg, channel_id, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
+        (text, link, points, done_msg, channel_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_tasks(active_only=False):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if active_only:
+        c.execute("SELECT task_id, text, link, points, done_msg, channel_id, active FROM tasks WHERE active = 1 ORDER BY task_id")
+    else:
+        c.execute("SELECT task_id, text, link, points, done_msg, channel_id, active FROM tasks ORDER BY task_id")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def get_task(task_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT task_id, text, link, points, done_msg, channel_id, active FROM tasks WHERE task_id = ?", (task_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def update_task_field(task_id, field, value):
+    allowed = {"text", "link", "points", "done_msg", "channel_id"}
+    if field not in allowed:
+        return
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(f"UPDATE tasks SET {field} = ? WHERE task_id = ?", (value, task_id))
+    conn.commit()
+    conn.close()
+
+
+def toggle_task_active(task_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT active FROM tasks WHERE task_id = ?", (task_id,))
+    row = c.fetchone()
+    if row:
+        new_val = 0 if row[0] else 1
+        c.execute("UPDATE tasks SET active = ? WHERE task_id = ?", (new_val, task_id))
+        conn.commit()
+    conn.close()
+
+
+def delete_task(task_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+    c.execute("DELETE FROM task_progress WHERE task_id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_task_progress_sent(user_id, task_id):
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO task_progress (user_id, task_id, sent_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, task_id) DO UPDATE SET sent_at = excluded.sent_at",
+        (user_id, task_id, now_str)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_task_progress(user_id, task_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT sent_at, completed_at FROM task_progress WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+    row = c.fetchone()
+    conn.close()
+    return row  # (sent_at, completed_at) or None
+
+
+def set_task_completed(user_id, task_id):
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE task_progress SET completed_at = ? WHERE user_id = ? AND task_id = ?", (now_str, user_id, task_id))
+    conn.commit()
+    conn.close()
+
+
+# ==================== دوال مساعدة: الإعلانات ====================
+
+def create_ad(user_id, username, content, price_paid):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO ads (user_id, username, content, price_paid, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
+        (user_id, username, content, price_paid, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    ad_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return ad_id
+
+
+def get_ad(ad_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT ad_id, user_id, username, content, price_paid, status FROM ads WHERE ad_id = ?", (ad_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def set_ad_status(ad_id, status):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE ads SET status = ? WHERE ad_id = ?", (status, ad_id))
     conn.commit()
     conn.close()
 
@@ -333,9 +466,9 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏆 أفضل 20 مستخدم", callback_data="user_top")],
         [InlineKeyboardButton("🎁 الهدية اليومية", callback_data="user_daily_gift")],
         [InlineKeyboardButton("📝 المهام", callback_data="user_tasks_menu")],
+        [InlineKeyboardButton("📢 شراء إعلان", callback_data="buy_ad")],
     ]
 
-    # أزرار إضافية للأدمن فقط
     if user.id == ADMIN_ID:
         keyboard.append([InlineKeyboardButton("📊 إحصائيات تفصيلية", callback_data="show_stats")])
         keyboard.append([InlineKeyboardButton("📋 نقاط كل مستخدم", callback_data="list_users")])
@@ -344,7 +477,9 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📝 المهام", callback_data="admin_tasks_menu")])
         keyboard.append([InlineKeyboardButton("📢 إرسال رسالة جماعية", callback_data="broadcast")])
         keyboard.append([InlineKeyboardButton("💬 إرسال رسالة لمستخدم", callback_data="list_users_msg")])
-        keyboard.append([InlineKeyboardButton("🎁 إرسال هدية نقاط", callback_data="admin_send_gift_menu")])
+        keyboard.append([InlineKeyboardButton("🎁 إرسال هدية نقاط لمستخدم", callback_data="admin_send_gift_menu")])
+        keyboard.append([InlineKeyboardButton("🎁 إرسال هدية نقاط للجميع", callback_data="gift_all")])
+        keyboard.append([InlineKeyboardButton("💵 تغيير سعر الإعلان", callback_data="change_ad_price")])
         keyboard.append([InlineKeyboardButton("🚫 إدارة الحظر", callback_data="ban_user_list")])
 
     target = update.effective_message or update.callback_query.message
@@ -352,7 +487,6 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_subscription_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """رسالة واحدة فيها زرين: فتح الرابط (مباشر) + التحقق من الاشتراك."""
     user = update.effective_user
     settings = get_settings()
     keyboard = [
@@ -384,20 +518,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (user.id, user.username or user.full_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ref_by)
     )
     conn.commit()
+    conn.close()
 
-    # إحالات + نقاط لصاحب الإحالة
     if ref_by and ref_by != user.id:
         add_referral(ref_by)
         add_points(ref_by, 150)
 
-    # إذا كان مفعّل من قبل منروح مباشرة عالقائمة الرئيسية
     _, _, verified = get_user_info(user.id)
     if verified:
         await send_main_menu(update, context)
     else:
         await send_subscription_gate(update, context)
 
-    # إشعار للأدمن
     try:
         if user.id != ADMIN_ID:
             await telegram_app.bot.send_message(
@@ -406,6 +538,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"Failed to notify admin about new user: {e}")
+
+
 # ==================== لوحة الإدارة الفخمة ====================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -420,7 +554,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💬 إرسال رسالة لمستخدم", callback_data="list_users_msg")],
         [InlineKeyboardButton("✏️ تعديل الرسائل", callback_data="admin_messages_menu")],
         [InlineKeyboardButton("📝 المهام", callback_data="admin_tasks_menu")],
-        [InlineKeyboardButton("🎁 إرسال هدية نقاط", callback_data="admin_send_gift_menu")],
+        [InlineKeyboardButton("🎁 إرسال هدية نقاط لمستخدم", callback_data="admin_send_gift_menu")],
+        [InlineKeyboardButton("🎁 إرسال هدية نقاط للجميع", callback_data="gift_all")],
+        [InlineKeyboardButton("💵 تغيير سعر الإعلان", callback_data="change_ad_price")],
         [InlineKeyboardButton("🚫 حظر مستخدم بالاسم", callback_data="ban_user")],
     ]
 
@@ -434,6 +570,9 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     data = query.data
     await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
 
     # منيو تعديل الرسائل
     if data == "admin_messages_menu":
@@ -451,16 +590,51 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # منيو المهام (للأدمن)
+    # منيو المهام (للأدمن) - أصبح يدعم عدة مهام
     if data == "admin_tasks_menu":
         keyboard = [
-            [InlineKeyboardButton("✏️ تعديل نص المهمة", callback_data="task_edit_text")],
-            [InlineKeyboardButton("🔗 تعديل رابط المهمة", callback_data="task_edit_link")],
-            [InlineKeyboardButton("💰 تعديل نقاط المهمة", callback_data="task_edit_points")],
-            [InlineKeyboardButton("🎉 تعديل رسالة إتمام المهمة", callback_data="task_edit_done")],
-            [InlineKeyboardButton("🔒 قناة تحقق المهمة (اختياري)", callback_data="change_task_channel")],
+            [InlineKeyboardButton("➕ إضافة مهمة جديدة", callback_data="task_add")],
+            [InlineKeyboardButton("📋 عرض / تعديل المهام", callback_data="task_list")],
         ]
         await query.message.reply_text("📝 إدارة المهام (أدمن):", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # عرض قائمة المهام مع أزرار تعديل لكل مهمة لحالها
+    if data == "task_list":
+        tasks = get_all_tasks(active_only=False)
+        if not tasks:
+            await query.message.reply_text("لا يوجد مهام مضافة بعد. اضغط ➕ إضافة مهمة جديدة.")
+            return
+        for task_id, text, link, points, done_msg, channel_id, active in tasks:
+            status = "🟢 مفعّلة" if active else "🔴 معطّلة"
+            keyboard = [
+                [InlineKeyboardButton("✏️ النص", callback_data=f"edittask_text_{task_id}"),
+                 InlineKeyboardButton("🔗 الرابط", callback_data=f"edittask_link_{task_id}")],
+                [InlineKeyboardButton("💰 النقاط", callback_data=f"edittask_points_{task_id}"),
+                 InlineKeyboardButton("🎉 رسالة الإتمام", callback_data=f"edittask_done_{task_id}")],
+                [InlineKeyboardButton("🔒 قناة التحقق", callback_data=f"edittask_channel_{task_id}")],
+                [InlineKeyboardButton("⏸️ تفعيل/تعطيل", callback_data=f"task_toggle_{task_id}"),
+                 InlineKeyboardButton("🗑 حذف", callback_data=f"task_delete_{task_id}")],
+            ]
+            await query.message.reply_text(
+                f"📌 مهمة #{task_id} ({status})\n"
+                f"النص: {text}\n"
+                f"الرابط: {link}\n"
+                f"النقاط: {points}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        return
+
+    if data.startswith("task_toggle_"):
+        task_id = int(data.replace("task_toggle_", ""))
+        toggle_task_active(task_id)
+        await query.message.reply_text("✔ تم تحديث حالة المهمة (تفعيل/تعطيل)")
+        return
+
+    if data.startswith("task_delete_"):
+        task_id = int(data.replace("task_delete_", ""))
+        delete_task(task_id)
+        await query.message.reply_text("🗑 تم حذف المهمة نهائياً")
         return
 
     # منيو إرسال الهدايا
@@ -504,7 +678,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("🚫 تم حظر المستخدم بنجاح")
         return
 
-    # عرض كل المستخدمين مرتبين حسب النقاط
     if data == "list_users":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -534,7 +707,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    # قائمة المستخدمين لإرسال رسالة فردية
     if data == "list_users_msg":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -574,7 +746,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text("تم تحديث حالة المستخدم 🚫✅")
         return
 
-    # إحصائيات تفصيلية
     if data == "show_stats":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -600,7 +771,6 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # أفضل 20 مستخدم بالنقاط (للأدمن)
     if data == "admin_top20":
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -621,6 +791,62 @@ async def admin_navigation_click(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text(text)
         return
 
+    # ==== موافقة / رفض الإعلانات ====
+    if data.startswith("ad_approve_"):
+        ad_id = int(data.replace("ad_approve_", ""))
+        ad = get_ad(ad_id)
+        if not ad:
+            await query.message.reply_text("❌ الإعلان غير موجود.")
+            return
+        _, uid, uname, content, price_paid, status = ad
+        if status != "pending":
+            await query.message.reply_text("هذا الإعلان تمت معالجته مسبقاً.")
+            return
+
+        set_ad_status(ad_id, "approved")
+        user_ids = get_all_active_user_ids()
+        sent = 0
+        for target_id in user_ids:
+            try:
+                await telegram_app.bot.send_message(target_id, f"📢 إعلان:\n\n{content}")
+                sent += 1
+            except Exception as e:
+                logger.error(f"Error sending ad to {target_id}: {e}")
+
+        try:
+            await telegram_app.bot.send_message(uid, "✅ تم نشر إعلانك بنجاح!")
+        except Exception as e:
+            logger.error(f"Failed to notify ad owner {uid}: {e}")
+
+        await query.message.reply_text(f"✔ تم نشر الإعلان #{ad_id} لعدد {sent} مستخدم")
+        return
+
+    if data.startswith("ad_reject_"):
+        ad_id = int(data.replace("ad_reject_", ""))
+        ad = get_ad(ad_id)
+        if not ad:
+            await query.message.reply_text("❌ الإعلان غير موجود.")
+            return
+        _, uid, uname, content, price_paid, status = ad
+        if status != "pending":
+            await query.message.reply_text("هذا الإعلان تمت معالجته مسبقاً.")
+            return
+
+        set_ad_status(ad_id, "rejected")
+        if price_paid:
+            add_points(uid, price_paid)
+
+        try:
+            await telegram_app.bot.send_message(
+                uid,
+                f"❌ تم رفض إعلانك.\n💰 تم إرجاع {price_paid} نقطة إلى رصيدك."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify ad owner {uid}: {e}")
+
+        await query.message.reply_text(f"🚫 تم رفض الإعلان #{ad_id} وإرجاع نقاط صاحبه")
+        return
+
 
 # ==================== حظر بالاسم ====================
 
@@ -639,17 +865,19 @@ async def process_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = c.fetchone()
 
     if not result:
+        conn.close()
         await update.message.reply_text("❌ لم يتم العثور على مستخدم بهذا الاسم")
         return ConversationHandler.END
 
     uid = result[0]
-
     c.execute("UPDATE users SET banned = 1 WHERE user_id = ?", (uid,))
     conn.commit()
     conn.close()
 
     await update.message.reply_text(f"🚫 تم حظر المستخدم {name} بنجاح")
     return ConversationHandler.END
+
+
 # ==================== تعديل الرسائل والإعدادات ====================
 
 async def ask_welcome_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -688,7 +916,7 @@ async def save_after_photo_msg(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def ask_verify_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رابط البوت/المصدر الذي تريد استخدامه للتفعيل (وهمي):")
+    await update.callback_query.message.reply_text("أرسل رابط البوت/المصدر الذي تريد استخدامه للتفعيل:")
     return WAITING_VERIFY_LINK
 
 
@@ -705,7 +933,7 @@ async def save_verify_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_verify_fail_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رسالة الفشل التي تظهر إذا لم يتم التفعيل (فخمة):")
+    await update.callback_query.message.reply_text("أرسل رسالة الفشل التي تظهر إذا لم يتم التفعيل:")
     return WAITING_VERIFY_FAIL_MSG
 
 
@@ -759,8 +987,6 @@ async def save_daily_gift_points(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
-# ==================== قنوات التحقق الحقيقي (اختياري) ====================
-
 async def ask_verify_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(
@@ -787,104 +1013,115 @@ async def save_verify_channel(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-async def ask_task_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==================== إضافة مهمة جديدة (خطوات متتالية) ====================
+
+async def ask_task_add_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(
-        "🔒 أرسل معرّف قناة/جروب المهمة (مثال: @my_channel أو -1001234567890) "
-        "عشان يصير التحقق من إنجاز المهمة حقيقي.\n\n"
-        "⚠️ شرط: لازم تضيف البوت أدمن بهاي القناة/الجروب وإلا ما رح يشتغل.\n\n"
-        "لإلغاء التحقق الحقيقي والرجوع للتحقق التلقائي، أرسل: -"
-    )
-    return WAITING_TASK_CHANNEL
+    await update.callback_query.message.reply_text("📝 أرسل نص المهمة الجديدة:")
+    return WAITING_TASK_ADD_TEXT
 
 
-async def save_task_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    val = update.message.text.strip()
-    val = None if val in ("-", "الغاء", "إلغاء", "clear") else val
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET task_channel_id = ? WHERE id = 1", (val,))
-    conn.commit()
-    conn.close()
-    if val:
-        await update.message.reply_text(f"✔ تم تفعيل التحقق الحقيقي للمهمة على: {val}")
-    else:
-        await update.message.reply_text("✔ تم إلغاء التحقق الحقيقي للمهمة، رجعنا للتحقق التلقائي.")
-    return ConversationHandler.END
+async def task_add_got_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_task_text"] = update.message.text
+    await update.message.reply_text("🔗 الآن أرسل رابط المهمة:")
+    return WAITING_TASK_ADD_LINK
 
 
-# ==================== مهام ====================
-
-async def ask_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل نص المهمة الجديد:")
-    return WAITING_TASK_TEXT
+async def task_add_got_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_task_link"] = update.message.text.strip()
+    await update.message.reply_text("💰 الآن أرسل عدد نقاط هذه المهمة:")
+    return WAITING_TASK_ADD_POINTS
 
 
-async def save_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET task_text = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✔ تم حفظ نص المهمة")
-    return ConversationHandler.END
-
-
-async def ask_task_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رابط المهمة الجديد:")
-    return WAITING_TASK_LINK
-
-
-async def save_task_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET task_link = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✔ تم حفظ رابط المهمة")
-    return ConversationHandler.END
-
-
-async def ask_task_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل عدد النقاط الجديدة للمهمة:")
-    return WAITING_TASK_POINTS
-
-
-async def save_task_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def task_add_got_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         pts = int(update.message.text.strip())
     except ValueError:
-        await update.message.reply_text("❌ الرجاء إرسال رقم صحيح لعدد النقاط.")
-        return ConversationHandler.END
+        await update.message.reply_text("❌ الرجاء إرسال رقم صحيح. أرسل عدد النقاط مجدداً:")
+        return WAITING_TASK_ADD_POINTS
+    context.user_data["new_task_points"] = pts
+    await update.message.reply_text("🎉 الآن أرسل رسالة إتمام المهمة (تظهر للمستخدم بعد إنجازها):")
+    return WAITING_TASK_ADD_DONE
 
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET task_points = ? WHERE id = 1", (pts,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text(f"✔ تم حفظ نقاط المهمة: {pts} نقطة")
+
+async def task_add_got_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_task_done"] = update.message.text
+    await update.message.reply_text(
+        "🔒 (اختياري) أرسل معرّف قناة/جروب للتحقق الحقيقي من إنجاز هذه المهمة "
+        "(مثال: @my_channel) أو أرسل - لتجاوز هذه الخطوة (تحقق تلقائي بالوقت فقط):"
+    )
+    return WAITING_TASK_ADD_CHANNEL
+
+
+async def task_add_got_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    val = update.message.text.strip()
+    channel_id = None if val in ("-", "الغاء", "إلغاء", "clear") else val
+
+    add_task(
+        context.user_data.get("new_task_text"),
+        context.user_data.get("new_task_link"),
+        context.user_data.get("new_task_points"),
+        context.user_data.get("new_task_done"),
+        channel_id
+    )
+
+    for k in ["new_task_text", "new_task_link", "new_task_points", "new_task_done"]:
+        context.user_data.pop(k, None)
+
+    await update.message.reply_text("✅ تمت إضافة المهمة الجديدة بنجاح!")
     return ConversationHandler.END
 
 
-async def ask_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("أرسل رسالة إتمام المهمة الجديدة:")
-    return WAITING_TASK_DONE_MSG
+# ==================== تعديل حقل من حقول مهمة موجودة ====================
+
+FIELD_LABELS = {
+    "text": "نص المهمة",
+    "link": "رابط المهمة",
+    "points": "نقاط المهمة",
+    "done_msg": "رسالة إتمام المهمة",
+    "channel_id": "قناة التحقق (أرسل - لإلغائها)",
+}
 
 
-async def save_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE settings SET task_done_msg = ? WHERE id = 1", (msg,))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✔ تم حفظ رسالة إتمام المهمة")
+async def ask_edit_task_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # data format: edittask_<field>_<task_id>
+    parts = query.data.split("_")
+    field = parts[1]
+    task_id = int(parts[2])
+    context.user_data["edit_task_id"] = task_id
+    context.user_data["edit_task_field"] = field
+    label = FIELD_LABELS.get(field, field)
+    await query.message.reply_text(f"✏️ أرسل القيمة الجديدة لـ «{label}» للمهمة #{task_id}:")
+    return WAITING_TASK_EDIT_FIELD
+
+
+async def save_edit_task_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    task_id = context.user_data.get("edit_task_id")
+    field = context.user_data.get("edit_task_field")
+    if not task_id or not field:
+        await update.message.reply_text("حدث خطأ، حاول مجدداً من قائمة المهام.")
+        return ConversationHandler.END
+
+    value = update.message.text.strip()
+
+    if field == "points":
+        try:
+            value = int(value)
+        except ValueError:
+            await update.message.reply_text("❌ الرجاء إرسال رقم صحيح لعدد النقاط.")
+            return ConversationHandler.END
+
+    if field == "channel_id":
+        value = None if value in ("-", "الغاء", "إلغاء", "clear") else value
+
+    update_task_field(task_id, field, value)
+
+    context.user_data.pop("edit_task_id", None)
+    context.user_data.pop("edit_task_field", None)
+
+    await update.message.reply_text(f"✔ تم تحديث {FIELD_LABELS.get(field, field)} للمهمة #{task_id}")
     return ConversationHandler.END
 
 
@@ -898,20 +1135,15 @@ async def ask_broadcast_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
-
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT user_id FROM users WHERE banned = 0")
-    users = c.fetchall()
-    conn.close()
+    user_ids = get_all_active_user_ids()
 
     sent = 0
-    for u in users:
+    for uid in user_ids:
         try:
-            await telegram_app.bot.send_message(u[0], msg)
+            await telegram_app.bot.send_message(uid, msg)
             sent += 1
         except Exception as e:
-            logger.error(f"Error sending to {u[0]}: {e}")
+            logger.error(f"Error sending to {uid}: {e}")
 
     await update.message.reply_text(f"تم إرسال الرسالة إلى {sent} مستخدم ✔")
     return ConversationHandler.END
@@ -943,7 +1175,7 @@ async def process_direct_message(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
-# ==================== هدية نقاط من الأدمن ====================
+# ==================== هدية نقاط من الأدمن (لمستخدم واحد) ====================
 
 async def ask_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -980,6 +1212,128 @@ async def process_gift_points(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+# ==================== هدية نقاط لجميع المستخدمين ====================
+
+async def ask_gift_all_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "🎁 أرسل عدد النقاط التي تريد منحها لكل المستخدمين غير المحظورين دفعة واحدة:"
+    )
+    return WAITING_GIFT_ALL_POINTS
+
+
+async def process_gift_all_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        pts = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال رقم صحيح لعدد النقاط.")
+        return ConversationHandler.END
+
+    user_ids = get_all_active_user_ids()
+    for uid in user_ids:
+        add_points(uid, pts)
+        try:
+            await telegram_app.bot.send_message(
+                uid,
+                f"🎁 وصلتك هدية نقاط من الإدارة لكل المستخدمين: +{pts} نقطة\nاستمتع!"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify {uid} about gift-all: {e}")
+
+    await update.message.reply_text(f"✔ تم منح {pts} نقطة لعدد {len(user_ids)} مستخدم")
+    return ConversationHandler.END
+
+
+# ==================== تغيير سعر الإعلان ====================
+
+async def ask_ad_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    settings = get_settings()
+    await update.callback_query.message.reply_text(
+        f"💵 السعر الحالي للإعلان: {settings['ad_price']} نقطة\nأرسل السعر الجديد:"
+    )
+    return WAITING_AD_PRICE
+
+
+async def save_ad_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال رقم صحيح للسعر.")
+        return ConversationHandler.END
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE settings SET ad_price = ? WHERE id = 1", (price,))
+    conn.commit()
+    conn.close()
+    await update.message.reply_text(f"✔ تم تحديث سعر الإعلان: {price} نقطة")
+    return ConversationHandler.END
+
+
+# ==================== شراء إعلان (من المستخدم) ====================
+
+async def ask_buy_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = update.effective_user
+    settings = get_settings()
+    price = settings["ad_price"]
+    points, _, _ = get_user_info(user.id)
+
+    if points < price:
+        await query.message.reply_text(
+            f"❌ رصيدك من النقاط غير كافٍ لشراء إعلان.\n"
+            f"💵 سعر الإعلان: {price} نقطة\n"
+            f"💰 رصيدك الحالي: {points} نقطة"
+        )
+        return ConversationHandler.END
+
+    await query.message.reply_text(
+        f"📢 سعر الإعلان: {price} نقطة (سيتم خصمها فوراً).\n"
+        f"أرسل الآن نص/محتوى الإعلان الذي تريد نشره:"
+    )
+    return WAITING_AD_CONTENT
+
+
+async def process_ad_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    content = update.message.text
+    settings = get_settings()
+    price = settings["ad_price"]
+
+    points, _, _ = get_user_info(user.id)
+    if points < price:
+        await update.message.reply_text("❌ رصيدك أصبح غير كافٍ، حاول مرة أخرى لاحقاً.")
+        return ConversationHandler.END
+
+    deduct_points(user.id, price)
+    ad_id = create_ad(user.id, user.username or user.full_name, content, price)
+
+    await update.message.reply_text(
+        f"✅ تم إرسال إعلانك للمراجعة من الإدارة.\n💰 تم خصم {price} نقطة من رصيدك.\n"
+        f"سيتم إعلامك فور الموافقة أو الرفض."
+    )
+
+    try:
+        keyboard = [
+            [InlineKeyboardButton("✅ نشر", callback_data=f"ad_approve_{ad_id}"),
+             InlineKeyboardButton("❌ رفض", callback_data=f"ad_reject_{ad_id}")]
+        ]
+        await telegram_app.bot.send_message(
+            ADMIN_ID,
+            f"📢 طلب إعلان جديد #{ad_id}\n"
+            f"من: {user.username or user.full_name} (ID: {user.id})\n"
+            f"💵 السعر المدفوع: {price} نقطة\n\n"
+            f"المحتوى:\n{content}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify admin about new ad: {e}")
+
+    return ConversationHandler.END
+
+
 # ==================== استقبال الصور ====================
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -989,7 +1343,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings = get_settings()
     await update.message.reply_text(settings["after_photo_msg"])
 
-    # نقاط مقابل إرسال صورة
     add_points(user.id, 20)
 
     try:
@@ -1009,12 +1362,10 @@ async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.effective_user
     text = update.message.text
 
-    # رسائل الأدمن لا تُحسب نقاط
     if user.id == ADMIN_ID:
         await update.message.reply_text(f"استلمت رسالتك: {text}")
         return
 
-    # نقاط مقابل إرسال رسالة
     add_points(user.id, 10)
 
     try:
@@ -1130,13 +1481,11 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
 
         channel_id = settings.get("verify_channel_id")
         if channel_id:
-            # تحقق حقيقي عبر Telegram API
             ok = await is_real_member(channel_id, user.id)
             if not ok:
                 await query.message.reply_text(settings["verify_fail_msg"])
                 return
         else:
-            # ما في قناة محددة للتحقق الحقيقي -> نعتمد تأخير بسيط كحد أدنى
             elapsed = seconds_since(get_gate_sent(user.id))
             if elapsed is None or elapsed < MIN_WAIT_SECONDS:
                 await query.message.reply_text(
@@ -1155,7 +1504,6 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "user_daily_gift":
-        settings = get_settings()
         daily_pts = settings["daily_gift_points"]
         last = get_last_gift_time(user.id)
 
@@ -1185,35 +1533,57 @@ async def user_navigation_click(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "user_tasks_menu":
-        settings = get_settings()
-        keyboard = [
-            [InlineKeyboardButton("🔗 فتح رابط المهمة", url=settings["task_link"])],
-            [InlineKeyboardButton("✔ أنجزت المهمة", callback_data="user_task_done")]
-        ]
-        set_task_sent(user.id)
-        await query.message.reply_text(
-            f"📝 المهمة الحالية:\n\n{settings['task_text']}\n\n"
-            f"💰 نقاط المهمة: {settings['task_points']}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        tasks = get_all_tasks(active_only=True)
+        if not tasks:
+            await query.message.reply_text("📝 لا يوجد مهام متاحة حالياً، تابعنا قريباً!")
+            return
+
+        for task_id, text, link, task_points, done_msg, channel_id, active in tasks:
+            progress = get_task_progress(user.id, task_id)
+            if progress and progress[1]:  # completed_at موجود
+                continue  # المستخدم خلص هاي المهمة، لا تعرضها مجدداً
+
+            keyboard = [
+                [InlineKeyboardButton("🔗 فتح رابط المهمة", url=link)],
+                [InlineKeyboardButton("✔ أنجزت المهمة", callback_data=f"task_done_{task_id}")]
+            ]
+            set_task_progress_sent(user.id, task_id)
+            await query.message.reply_text(
+                f"📝 مهمة #{task_id}:\n\n{text}\n\n"
+                f"💰 نقاط المهمة: {task_points}",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         return
 
-    if data == "user_task_done":
-        settings = get_settings()
-        channel_id = settings.get("task_channel_id")
+    if data.startswith("task_done_"):
+        task_id = int(data.replace("task_done_", ""))
+        task = get_task(task_id)
+        if not task or not task[6]:  # غير موجودة أو معطّلة
+            await query.message.reply_text("❌ هذه المهمة لم تعد متاحة.")
+            return
+
+        _, text, link, task_points, done_msg, channel_id, active = task
+
+        progress = get_task_progress(user.id, task_id)
+        if progress and progress[1]:
+            await query.message.reply_text("✅ لقد أنجزت هذه المهمة من قبل.")
+            return
+
         if channel_id:
             ok = await is_real_member(channel_id, user.id)
             if not ok:
                 await query.message.reply_text("❌ لسا ما اشتركت/أنجزت المهمة، جرب كمان مرة بعد ما تخلّصها.")
                 return
         else:
-            elapsed = seconds_since(get_task_sent(user.id))
+            sent_at = progress[0] if progress else None
+            elapsed = seconds_since(sent_at)
             if elapsed is None or elapsed < MIN_WAIT_SECONDS:
                 await query.message.reply_text("⏳ تأكد إنك فتحت الرابط وأنجزت المهمة، وحاول بعد كم ثانية.")
                 return
 
-        add_points(user.id, settings["task_points"])
-        await query.message.reply_text(settings["task_done_msg"])
+        add_points(user.id, task_points)
+        set_task_completed(user.id, task_id)
+        await query.message.reply_text(done_msg)
         return
 
 
@@ -1279,39 +1649,45 @@ verify_channel_conv = ConversationHandler(
     fallbacks=[]
 )
 
-task_channel_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_channel, pattern="^change_task_channel$")],
-    states={WAITING_TASK_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_channel)]},
-    fallbacks=[]
-)
-
-task_text_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_text, pattern="^task_edit_text$")],
-    states={WAITING_TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_text)]},
-    fallbacks=[]
-)
-
-task_link_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_link, pattern="^task_edit_link$")],
-    states={WAITING_TASK_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_link)]},
-    fallbacks=[]
-)
-
-task_points_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_points, pattern="^task_edit_points$")],
-    states={WAITING_TASK_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_points)]},
-    fallbacks=[]
-)
-
-task_done_conv = ConversationHandler(
-    entry_points=[CallbackQueryHandler(ask_task_done, pattern="^task_edit_done$")],
-    states={WAITING_TASK_DONE_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_task_done)]},
-    fallbacks=[]
-)
-
 gift_points_conv = ConversationHandler(
     entry_points=[CallbackQueryHandler(ask_gift_points, pattern="^gift_u_")],
     states={WAITING_GIFT_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_gift_points)]},
+    fallbacks=[]
+)
+
+gift_all_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_gift_all_points, pattern="^gift_all$")],
+    states={WAITING_GIFT_ALL_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_gift_all_points)]},
+    fallbacks=[]
+)
+
+ad_price_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_ad_price, pattern="^change_ad_price$")],
+    states={WAITING_AD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_ad_price)]},
+    fallbacks=[]
+)
+
+buy_ad_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_buy_ad, pattern="^buy_ad$")],
+    states={WAITING_AD_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_ad_content)]},
+    fallbacks=[]
+)
+
+task_add_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_task_add_text, pattern="^task_add$")],
+    states={
+        WAITING_TASK_ADD_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_add_got_text)],
+        WAITING_TASK_ADD_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_add_got_link)],
+        WAITING_TASK_ADD_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_add_got_points)],
+        WAITING_TASK_ADD_DONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_add_got_done)],
+        WAITING_TASK_ADD_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_add_got_channel)],
+    },
+    fallbacks=[]
+)
+
+task_edit_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(ask_edit_task_field, pattern="^edittask_(text|link|points|done|channel)_")],
+    states={WAITING_TASK_EDIT_FIELD: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_edit_task_field)]},
     fallbacks=[]
 )
 
@@ -1323,13 +1699,16 @@ telegram_app.add_handler(CommandHandler("admin", admin_panel))
 telegram_app.add_handler(
     CallbackQueryHandler(
         admin_navigation_click,
-        pattern="^(admin_messages_menu|admin_tasks_menu|admin_send_gift_menu|list_users|list_users_msg|toggleban_u_.*|show_stats|ban_user_list|ban_u_.*|admin_top20)$"
+        pattern="^(admin_messages_menu|admin_tasks_menu|admin_send_gift_menu|list_users|list_users_msg|"
+                "toggleban_u_.*|show_stats|ban_user_list|ban_u_.*|admin_top20|task_list|"
+                "task_toggle_.*|task_delete_.*|ad_approve_.*|ad_reject_.*)$"
     )
 )
 telegram_app.add_handler(
     CallbackQueryHandler(
         user_navigation_click,
-        pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|user_confirm_verify|user_daily_gift|user_tasks_menu|user_task_done)$"
+        pattern="^(user_points|user_referrals|user_stats|user_top|user_activate_menu|user_open_verify_link|"
+                "user_confirm_verify|user_daily_gift|user_tasks_menu|task_done_.*)$"
     )
 )
 
@@ -1343,12 +1722,12 @@ telegram_app.add_handler(verify_fail_msg_conv)
 telegram_app.add_handler(first_sub_msg_conv)
 telegram_app.add_handler(daily_gift_points_conv)
 telegram_app.add_handler(verify_channel_conv)
-telegram_app.add_handler(task_channel_conv)
-telegram_app.add_handler(task_text_conv)
-telegram_app.add_handler(task_link_conv)
-telegram_app.add_handler(task_points_conv)
-telegram_app.add_handler(task_done_conv)
 telegram_app.add_handler(gift_points_conv)
+telegram_app.add_handler(gift_all_conv)
+telegram_app.add_handler(ad_price_conv)
+telegram_app.add_handler(buy_ad_conv)
+telegram_app.add_handler(task_add_conv)
+telegram_app.add_handler(task_edit_conv)
 
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_or_link))
