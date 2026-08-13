@@ -75,6 +75,8 @@ async def send_admin_home(message):
         [InlineKeyboardButton("💬 رسالة لمستخدم محدد", callback_data="adm_dm")],
         [InlineKeyboardButton("🎁 هدية نقاط لمستخدم", callback_data="adm_gift_user")],
         [InlineKeyboardButton("🎁 هدية نقاط للجميع", callback_data="adm_gift_all")],
+        [InlineKeyboardButton("➖ حذف نقاط من مستخدم", callback_data="adm_deduct_user")],
+        [InlineKeyboardButton("➖ حذف نقاط من الجميع", callback_data="adm_deduct_all")],
         [InlineKeyboardButton("⭐ إعدادات النجوم", callback_data="adm_stars_settings")],
         [InlineKeyboardButton("🌐 إعدادات الإحالة", callback_data="adm_ref_settings")],
         [InlineKeyboardButton("💳 إعدادات الشيكات", callback_data="adm_cheque_settings")],
@@ -299,6 +301,7 @@ async def show_user_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("💬 رسالة له", callback_data=f"adm_dm_user:{uid}")],
         [InlineKeyboardButton("🎁 هدية نقاط له", callback_data=f"adm_gift_user_id:{uid}")],
+        [InlineKeyboardButton("➖ حذف نقاط منه", callback_data=f"adm_deduct_user_id:{uid}")],
         [InlineKeyboardButton(ban_label, callback_data=f"adm_toggleban:{uid}:{page}")],
         [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data=f"adm_ubrowse:{page}")],
     ]
@@ -354,7 +357,12 @@ async def show_user_pick_list(update: Update, context: ContextTypes.DEFAULT_TYPE
     if nav:
         keyboard.append(nav)
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_home")])
-    label = "💬 اختر مين تراسله (الأحدث أولاً):" if purpose == "dm" else "🎁 اختر مين تعطيه هدية (الأحدث أولاً):"
+    labels = {
+        "dm": "💬 اختر مين تراسله (الأحدث أولاً):",
+        "gift": "🎁 اختر مين تعطيه هدية (الأحدث أولاً):",
+        "deduct": "➖ اختر مين تحذف من رصيده (الأحدث أولاً):",
+    }
+    label = labels.get(purpose, labels["gift"])
     target = update.callback_query.message if update.callback_query else update.effective_message
     await target.reply_text(label, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -379,6 +387,12 @@ async def pick_user_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dm_target"] = uid
         context.user_data["awaiting"] = "admin:dm_text"
         await query.message.reply_text(f"💬 أرسل نص الرسالة للمستخدم {uid}:")
+    elif purpose == "deduct":
+        context.user_data["deduct_target"] = uid
+        context.user_data["awaiting"] = "admin:deduct_amount"
+        u = db.get_user(uid)
+        bal = u["balance"] if u else 0
+        await query.message.reply_text(f"➖ رصيد المستخدم {uid} الحالي: {fmt(bal)} ليرة.\nكم عدد النقاط التي تريد حذفها؟")
     else:
         context.user_data["gift_target"] = uid
         context.user_data["awaiting"] = "admin:gift_amount"
@@ -489,6 +503,41 @@ async def gift_all_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     context.user_data["awaiting"] = "admin:gift_all_amount"
     await query.message.reply_text("🎁 كم عدد النقاط التي تريد منحها لكل المستخدمين غير المحظورين؟")
+
+
+# ==================== ➖ حذف نقاط ====================
+
+async def deduct_user_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not config.is_admin(update.effective_user.id):
+        return
+    await show_user_pick_list(update, context, "deduct", 0)
+
+
+async def deduct_user_direct_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not config.is_admin(update.effective_user.id):
+        return
+    uid = int(query.data.split(":")[1])
+    context.user_data["deduct_target"] = uid
+    context.user_data["awaiting"] = "admin:deduct_amount"
+    u = db.get_user(uid)
+    bal = u["balance"] if u else 0
+    await query.message.reply_text(f"➖ رصيد المستخدم {uid} الحالي: {fmt(bal)} ليرة.\nكم عدد النقاط التي تريد حذفها؟")
+
+
+async def deduct_all_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not config.is_admin(update.effective_user.id):
+        return
+    context.user_data["awaiting"] = "admin:deduct_all_amount"
+    await query.message.reply_text(
+        "➖ كم عدد النقاط التي تريد حذفها من كل المستخدمين غير المحظورين؟\n"
+        "⚠️ أي مستخدم رصيده أقل من هذا المبلغ رح يتم تجاوزه (ما رح ينزل رصيده تحت الصفر)."
+    )
 
 
 # ==================== ⭐ إعدادات النجوم و🌐 إعدادات الإحالة و✏️ النصوص ====================
@@ -801,6 +850,54 @@ async def admin_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         context.user_data["awaiting"] = None
         await update.message.reply_text(f"✔ تم منح {fmt(amount)} ليرة لعدد {len(user_ids)} مستخدم.")
 
+    elif kind == "deduct_amount":
+        if not text.isdigit() or int(text) <= 0:
+            await update.message.reply_text("❌ رقم غير صالح.")
+            return
+        target = context.user_data.get("deduct_target")
+        amount = int(text)
+        u = db.get_user(target)
+        bal = u["balance"] if u else 0
+        if amount > bal:
+            await update.message.reply_text(
+                f"❌ رصيد المستخدم الحالي {fmt(bal)} ليرة فقط، وهو أقل من {fmt(amount)} ليرة.\n"
+                f"أرسل رقم أصغر أو يساوي {fmt(bal)}."
+            )
+            return
+        db.add_balance(target, -amount, kind="admin_deduct", note="حذف نقاط من الإدارة")
+        try:
+            await _app.bot.send_message(target, f"➖ تم خصم {fmt(amount)} ليرة من رصيدك من قبل الإدارة.")
+        except Exception:
+            pass
+        context.user_data["awaiting"] = None
+        context.user_data.pop("deduct_target", None)
+        await update.message.reply_text(f"✔ تم حذف {fmt(amount)} ليرة من رصيد المستخدم {target}.")
+
+    elif kind == "deduct_all_amount":
+        if not text.isdigit() or int(text) <= 0:
+            await update.message.reply_text("❌ رقم غير صالح.")
+            return
+        amount = int(text)
+        user_ids = db.get_all_active_user_ids()
+        deducted, skipped = 0, 0
+        for uid in user_ids:
+            u = db.get_user(uid)
+            bal = u["balance"] if u else 0
+            if amount > bal:
+                skipped += 1
+                continue
+            db.add_balance(uid, -amount, kind="admin_deduct_all", note="حذف جماعي من الإدارة")
+            deducted += 1
+            try:
+                await _app.bot.send_message(uid, f"➖ تم خصم {fmt(amount)} ليرة من رصيدك من قبل الإدارة.")
+            except Exception:
+                pass
+        context.user_data["awaiting"] = None
+        await update.message.reply_text(
+            f"✔ تم حذف {fmt(amount)} ليرة من {deducted} مستخدم.\n"
+            f"⏭ تم تجاوز {skipped} مستخدم لأن رصيدهم أقل من المبلغ."
+        )
+
     elif kind == "stars_rate":
         if not text.isdigit():
             await update.message.reply_text("❌ رقم غير صالح.")
@@ -1037,6 +1134,10 @@ def register_handlers(telegram_app):
     telegram_app.add_handler(CallbackQueryHandler(gift_user_click, pattern="^adm_gift_user$"))
     telegram_app.add_handler(CallbackQueryHandler(gift_user_direct_click, pattern="^adm_gift_user_id:"))
     telegram_app.add_handler(CallbackQueryHandler(gift_all_click, pattern="^adm_gift_all$"))
+
+    telegram_app.add_handler(CallbackQueryHandler(deduct_user_click, pattern="^adm_deduct_user$"))
+    telegram_app.add_handler(CallbackQueryHandler(deduct_user_direct_click, pattern="^adm_deduct_user_id:"))
+    telegram_app.add_handler(CallbackQueryHandler(deduct_all_click, pattern="^adm_deduct_all$"))
 
     telegram_app.add_handler(CallbackQueryHandler(stars_settings_click, pattern="^adm_stars_settings$"))
     telegram_app.add_handler(CallbackQueryHandler(ref_settings_click, pattern="^adm_ref_settings$"))
