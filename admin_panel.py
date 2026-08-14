@@ -10,7 +10,7 @@ admin_panel.py — لوحة تحكم الأدمن الشاملة:
 import secrets
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup 
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, CallbackQueryHandler, ContextTypes
 
 import db
@@ -276,7 +276,7 @@ async def show_users_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         keyboard.append(nav)
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_home")])
-    await query.message.reply_text(f"👥 المستخدمون (صفحة {page+1}):", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.edit_text(f"👥 المستخدمون (صفحة {page+1}):", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def show_user_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,8 +363,10 @@ async def show_user_pick_list(update: Update, context: ContextTypes.DEFAULT_TYPE
         "deduct": "➖ اختر مين تحذف من رصيده (الأحدث أولاً):",
     }
     label = labels.get(purpose, labels["gift"])
-    target = update.callback_query.message if update.callback_query else update.effective_message
-    await target.reply_text(label, reply_markup=InlineKeyboardMarkup(keyboard))
+    if update.callback_query:
+        await update.callback_query.message.edit_text(label, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.effective_message.reply_text(label, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def pick_page_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
