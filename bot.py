@@ -1412,6 +1412,11 @@ async def earn_check_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("لست مشتركاً في القناة/المحادثة. اشترك ثم حاول.")
         return
 
+    existing = db.get_completion(task_id, user_id)
+    if existing and existing["status"] == "approved":
+        await query.message.reply_text("✅ سبق واستلمت مكافأة هذه المهمة، ما في إمكانية استلامها مرتين.")
+        return
+
     db.start_completion(task_id, user_id)
     db.resolve_completion(task_id, user_id, "approved")
     db.add_balance(user_id, t["unit_price"], kind="task_reward", note=f"مهمة #{task_id}")
@@ -1435,17 +1440,27 @@ async def earn_view_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
 
+    existing = db.get_completion(task_id, user_id)
+    if existing and existing["status"] == "approved":
+        await query.message.reply_text("✅ سبق واستلمت مكافأة هذا المنشور، ما في إمكانية استلامها مرتين.")
+        return
+
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.error(f"failed to delete post-list message for task {task_id}: {e}")
+
     if t["target_chat_id"] and t.get("source_message_id"):
         try:
             await telegram_app.bot.forward_message(user_id, t["target_chat_id"], t["source_message_id"])
         except Exception as e:
             logger.error(f"forward_message failed for task {task_id}: {e}")
             if t["link"]:
-                await query.message.reply_text(f"🔗 شاهد المنشور هنا: {t['link']}")
+                await context.bot.send_message(user_id, f"🔗 شاهد المنشور هنا: {t['link']}")
             else:
-                await query.message.reply_text("⚠️ ما قدرت أعرض المنشور مباشرة، لكن رح تحصل مكافأتك.")
+                await context.bot.send_message(user_id, "⚠️ ما قدرت أعرض المنشور مباشرة، لكن رح تحصل مكافأتك.")
     elif t["link"]:
-        await query.message.reply_text(f"🔗 شاهد المنشور هنا: {t['link']}")
+        await context.bot.send_message(user_id, f"🔗 شاهد المنشور هنا: {t['link']}")
 
     db.start_completion(task_id, user_id)
     db.resolve_completion(task_id, user_id, "approved")
@@ -1457,7 +1472,8 @@ async def earn_view_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🛑 تبليغ", callback_data=f"earn_report:{task_id}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="earn_menu")],
     ]
-    await query.message.reply_text(
+    await context.bot.send_message(
+        user_id,
         f"💰 حصلت على {fmt_lira(t['unit_price'])} ليرة مقابل مشاهدة المنشور № {task_id}!\nرصيدك الحالي: {fmt_lira(u['balance'])} ليرة",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
