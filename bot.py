@@ -1,6 +1,7 @@
-import os 
+import os
 import re
 import math
+import asyncio
 import logging
 import secrets
 import traceback
@@ -1462,6 +1463,8 @@ async def earn_view_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif t["link"]:
         await context.bot.send_message(user_id, f"🔗 شاهد المنشور هنا: {t['link']}")
 
+    await asyncio.sleep(3)
+
     db.start_completion(task_id, user_id)
     db.resolve_completion(task_id, user_id, "approved")
     db.add_balance(user_id, t["unit_price"], kind="task_reward", note=f"مشاهدة منشور #{task_id}")
@@ -1517,12 +1520,69 @@ async def earn_report_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     task_id = int(query.data.split(":")[1])
+    reasons = [
+        ("محتوى غير لائق", "inappropriate"),
+        ("رابط لا يعمل / منتهي", "broken_link"),
+        ("محتوى مضلل أو نصب", "scam"),
+        ("مخالف لقوانين تيليجرام", "tos"),
+        ("محتوى مكرر / سبام", "duplicate"),
+    ]
+    keyboard = [[InlineKeyboardButton(label, callback_data=f"earn_report_reason:{task_id}:{code}")] for label, code in reasons]
+    keyboard.append([InlineKeyboardButton("✍️ كتابة سبب آخر", callback_data=f"earn_report_custom:{task_id}")])
+    keyboard.append([InlineKeyboardButton("🔙 إلغاء", callback_data="earn_menu")])
+    await query.message.reply_text("🛑 اختر سبب التبليغ:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+REPORT_REASON_LABELS = {
+    "inappropriate": "محتوى غير لائق",
+    "broken_link": "رابط لا يعمل / منتهي",
+    "scam": "محتوى مضلل أو نصب",
+    "tos": "مخالف لقوانين تيليجرام",
+    "duplicate": "محتوى مكرر / سبام",
+}
+
+
+async def _send_report_to_admins(context, task_id, reporter_id, reason_text):
+    t = db.get_task(task_id)
+    if t:
+        cat_label = db.CATEGORY_LABELS.get(t["category"], t["category"])
+        target_line = f"🔗 الهدف: {t['link']}" if t.get("link") else (f"🆔 المحادثة: {t['target_chat_id']}" if t.get("target_chat_id") else "🆔 الهدف: غير محدد")
+        task_info = f"📌 مهمة #{task_id} ({cat_label})\n{target_line}"
+    else:
+        task_info = f"📌 مهمة #{task_id} (لم تعد موجودة)"
+    text = f"🛑 بلاغ جديد\n👤 من المستخدم: {reporter_id}\n{task_info}\n📝 السبب: {reason_text}"
     for admin_id in ADMIN_IDS:
         try:
-            await telegram_app.bot.send_message(admin_id, f"🛑 تبليغ عن مهمة #{task_id} من المستخدم {update.effective_user.id}")
+            await context.bot.send_message(admin_id, text)
         except Exception:
             pass
-    await query.message.reply_text("✔ تم إرسال البلاغ للإدارة، شكراً لك.")
+
+
+async def earn_report_reason_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    _, task_id_s, code = query.data.split(":")
+    reason_text = REPORT_REASON_LABELS.get(code, code)
+    await _send_report_to_admins(context, int(task_id_s), update.effective_user.id, reason_text)
+    await query.message.edit_text("✔ تم إرسال البلاغ للإدارة، شكراً لك.")
+
+
+async def earn_report_custom_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    task_id = int(query.data.split(":")[1])
+    context.user_data["awaiting"] = f"report_reason:{task_id}"
+    await query.message.edit_text("✍️ اكتب سبب التبليغ:")
+
+
+async def handle_report_reason_text(update: Update, context: ContextTypes.DEFAULT_TYPE, task_id):
+    reason_text = update.message.text.strip()
+    if not reason_text:
+        await update.message.reply_text("❌ الرجاء كتابة سبب التبليغ.")
+        return
+    await _send_report_to_admins(context, task_id, update.effective_user.id, reason_text)
+    context.user_data["awaiting"] = None
+    await update.message.reply_text("✔ تم إرسال البلاغ للإدارة، شكراً لك.")
 
 
 async def earn_rules_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2450,6 +2510,8 @@ async def generic_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_cheque_captcha(update, context)
     elif awaiting == "security_captcha":
         await handle_security_captcha(update, context)
+    elif awaiting.startswith("report_reason:"):
+        await handle_report_reason_text(update, context, int(awaiting.split(":")[1]))
     elif awaiting.startswith("admin:"):
         await admin_text_router(update, context, awaiting)
 
@@ -2553,6 +2615,8 @@ telegram_app.add_handler(CallbackQueryHandler(earn_check_click, pattern="^earn_c
 telegram_app.add_handler(CallbackQueryHandler(earn_view_post, pattern="^earn_view_post:"))
 telegram_app.add_handler(CallbackQueryHandler(earn_open_task, pattern="^earn_open:"))
 telegram_app.add_handler(CallbackQueryHandler(earn_report_click, pattern="^earn_report:"))
+telegram_app.add_handler(CallbackQueryHandler(earn_report_reason_click, pattern="^earn_report_reason:"))
+telegram_app.add_handler(CallbackQueryHandler(earn_report_custom_click, pattern="^earn_report_custom:"))
 telegram_app.add_handler(CallbackQueryHandler(earn_rules_click, pattern="^earn_rules$"))
 telegram_app.add_handler(CallbackQueryHandler(owner_review_action, pattern="^(adpay|adrejc|adrev):"))
 telegram_app.add_handler(CallbackQueryHandler(review_open_click, pattern="^review_open:"))
